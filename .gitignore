@@ -1,0 +1,15 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# OMC internal state
+.omc/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node (if added later)
+node_modules/
