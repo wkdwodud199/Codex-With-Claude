@@ -1,5 +1,7 @@
 # Codex-With-Claude
 
+> **[English](./README.en.md)** | 한국어
+
 Codex가 설계하고, Claude가 구현하는 협업 워크스페이스.
 
 ## 개요
