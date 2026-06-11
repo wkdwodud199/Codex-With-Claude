@@ -10,6 +10,8 @@
       3. 기존 design.md 존재                          -> exit 1 (덮어쓰기 가드)
       4. --auto + codex 스텁(exit 0) + 미완성 초안    -> 스텁 호출 후 후검증 실패 (exit 1)
       5. 기본(no --auto) + codex 스텁                 -> 스텁 스킵, 수동 모드 배너, exit 1
+      6. 새 task 생성                                  -> manifest.md 자동 생성 (Phase A)
+      7. --auto + 유효 design + codex 비정상 종료      -> 실패 전파 (D2)
 
     참고: 로컬에 Pester가 없어도 무방하다. CI(smoke-powershell job)에서
     Invoke-Pester 로 실행하도록 배선하는 것을 권장한다 (notes 참조).
@@ -159,8 +161,6 @@ Describe "codex-design.ps1" -Skip:([string]::IsNullOrEmpty($script:Shell)) {
         $taskDir = Join-Path $script:Work "kb\tasks\task-e"
         if ($script:IsWin) {
             # Windows: codex.cmd 스텁이 유효 design 을 복사 후 exit 7
-            $taskDirEsc = $taskDir -replace '\\', '\\'
-            $fixtureEsc = $script:GoodFixture -replace '\\', '\\'
             $cmd = "@echo off`r`nmkdir `"$taskDir`" 2>nul`r`ncopy /y `"$($script:GoodFixture)`" `"$taskDir\design.md`" >nul`r`nexit /b 7"
             Set-Content -Path (Join-Path $binDir "codex.cmd") -Value $cmd -Encoding ASCII
         } else {

@@ -11,6 +11,8 @@
       4. good design (기본 수동 모드)           -> exit 0 + impl-notes 생성 + 수동 모드 배너
       5. good design + --auto + 세션 안          -> exit 0 + 재귀 방지 배너
       6. good design + --auto + claude CLI 부재  -> NON-ZERO + no-CLI 경고 (D2)
+      7. -Done + legacy task                      -> exit 0 (allowlist, 산출물 무관 통과)
+      8. -Done + 템플릿 그대로인 구현 노트         -> exit 1 (done-gate 거부)
 
     참고: 로컬에 Pester가 없어도 무방하다. CI(smoke-powershell job)에서
     Invoke-Pester 로 실행하도록 배선하는 것을 권장한다 (notes 참조).
@@ -139,5 +141,27 @@ Describe "claude-implement.ps1" -Skip:([string]::IsNullOrEmpty($script:Shell)) {
         # --auto 인데 claude CLI 부재 → 요청한 자동 작업 실패 → NON-ZERO.
         $r.ExitCode | Should -Not -Be 0
         $r.Output | Should -Match "claude CLI를 찾을 수 없습니다"
+    }
+
+    # C-2: -Done 러너 통합 경로 — 인자 파싱 → validator --check-done 위임 → exit 전파 (bats 미러)
+    It "-Done with legacy task-001 -> exit 0 (C-2)" {
+        # task-001 은 legacy allowlist 이므로 산출물 없어도 통과한다.
+        New-Item -ItemType Directory -Path (Join-Path $script:Work "kb\tasks\task-001") -Force | Out-Null
+        $r = Invoke-Script -ScriptPath $script:ScriptPath -ScriptArgs @("task-001", "-Done")
+        $r.ExitCode | Should -Be 0
+        $r.Output | Should -Match "legacy"
+    }
+
+    It "-Done with incomplete task (template notes) -> exit 1 (C-2)" {
+        # implementation-notes 가 템플릿 그대로(치환만)인 task → done-gate 가 거부한다.
+        $taskDir = Join-Path $script:Work "kb\tasks\task-z"
+        New-Item -ItemType Directory -Path $taskDir -Force | Out-Null
+        Copy-Item $script:GoodFixture (Join-Path $taskDir "design.md")
+        $tpl = Get-Content (Join-Path $script:Work "templates\implementation-notes.md") -Raw
+        [System.IO.File]::WriteAllText((Join-Path $taskDir "implementation-notes.md"),
+            ($tpl -replace 'task-<NNN>', 'task-z'), [System.Text.UTF8Encoding]::new($false))
+        $r = Invoke-Script -ScriptPath $script:ScriptPath -ScriptArgs @("task-z", "-Done")
+        $r.ExitCode | Should -Be 1
+        $r.Output | Should -Match "FAIL"
     }
 }
