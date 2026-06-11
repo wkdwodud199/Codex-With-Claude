@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "description": "Design document validation schema. Single source of truth for bash, PowerShell, and Python runners.",
+  "required_sections": [
+    "목표 (Objective)",
+    "범위 (Scope)",
+    "제약 (Constraints)",
+    "구현 단계 (Implementation Steps)",
+    "파일/모듈 영향 (Affected Files/Modules)",
+    "테스트 기준 (Test Criteria)",
+    "오픈 이슈 (Open Issues)"
+  ],
+  "placeholders": [
+    "(이 작업이 달성하려는 것을 1-2문장으로 기술)",
+    "(이 작업에 포함되는 것과 포함되지 않는 것을 명시)",
+    "(기술적, 시간적, 또는 기타 제약 조건)",
+    "(설계 시점에 해결되지 않은 질문이나 리스크)",
+    "(이 설계가 의존하는 입력 나열)",
+    "(이 설계가 생성할 산출물 나열)",
+    "(구현 완료 후 다음 단계 기술)"
+  ],
+  "required_meta_fields": ["Status", "Inputs", "Outputs", "Next step"],
+  "allowed_statuses_for_implementation": ["ready", "done"],
+  "blocked_statuses": {
+    "draft": "설계가 아직 미완성입니다. Status를 'ready'로 변경하세요.",
+    "blocked": "설계가 차단 상태입니다.",
+    "in-progress": "in-progress 는 구현 상태입니다. design.md 에는 사용하지 않으며, 구현 진행은 implementation-notes.md 에 기록하세요."
+  },
+  "empty_content_checks": [
+    {
+      "id": "default_affected_table",
+      "regex": "^\\|\\s*\\|\\s*create\\s*/\\s*modify\\s*/\\s*delete\\s*\\|",
+      "message": "파일/모듈 영향 테이블이 템플릿 기본값 그대로입니다."
+    },
+    {
+      "id": "empty_checkbox",
+      "regex": "^\\s*-\\s+\\[\\s\\]\\s*$",
+      "message": "테스트 기준에 내용 없는 빈 체크박스가 있습니다."
+    }
+  ],
+  "non_empty_sections": [
+    {
+      "id": "affected_files_table",
+      "section": "파일/모듈 영향 (Affected Files/Modules)",
+      "message": "파일/모듈 영향 섹션에 실제 내용 행이 없습니다. (헤더/구분선만 존재)"
+    }
+  ]
+}
