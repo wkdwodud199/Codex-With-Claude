@@ -1,9 +1,9 @@
-# 설계 문서 템플릿 — task-<NNN>
+# 설계 문서 — task-<NNN>
 
 > Status: draft
 > Inputs: (이 설계가 의존하는 입력 나열)
 > Outputs: (이 설계가 생성할 산출물 나열)
-> Next step: Claude가 이 문서를 읽고 구현 시작
+> Next step: (구현 완료 후 다음 단계 기술)
 
 ## 목표 (Objective)
 
