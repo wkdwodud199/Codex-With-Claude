@@ -13,3 +13,18 @@ Thumbs.db
 
 # Node (if added later)
 node_modules/
+.omx/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Claude Code local state (not part of the repo contract)
+.claude/
+CWC_imp.md
+
+# 로컬 코드리뷰 보고서 (저장소 계약 외)
+kb/artifacts/code-review-*.md
