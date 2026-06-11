@@ -12,21 +12,75 @@ This repository creates a repeatable **Codex (Designer) → Claude (Implementer)
 - Claude reads that document and implements accordingly
 - Incomplete design documents are automatically blocked from implementation
 
+## Workflow
+
+From the user prompt, the lanes that **Codex (Designer)** and **Claude (Implementer)** each traverse. Full write-up: [kb/concepts/workflow.md](./kb/concepts/workflow.md).
+
+```mermaid
+flowchart TD
+    U["USER PROMPT — task request"] --> ENTRY["Entry load set: QUICKREF + manifest + design.md"]
+    ENTRY --> Q{"design.md exists?"}
+
+    Q -->|"no"| C1["run codex-design"]
+    Q -->|"yes · ready/done"| L1["run claude-implement"]
+
+    subgraph CODEX["① Codex lane · Designer"]
+        direction TB
+        C1 --> C2["task dir + design draft + manifest auto-gen"]
+        C2 --> C4{"--auto?"}
+        C4 -->|"manual"| C5["print guide, exit 0"]
+        C4 -->|"in session"| C6["recursion guard skip, exit 0"]
+        C4 -->|"auto"| C7["codex exec · sandbox + git preflight"]
+        C7 --> C8["design.md = Status ready"]
+    end
+
+    C8 --> L1
+
+    subgraph CLAUDE["② Claude lane · Implementer"]
+        direction TB
+        L1 --> L2{"validation gate · validator/cli.py · schema.json"}
+        L2 -->|"rc1 fix · rc2 env error"| X1["implementation blocked"]
+        L2 -->|"rc0 pass"| L3["impl-notes draft → implement → record changes"]
+        L3 --> L6["artifact summary = Status done"]
+    end
+
+    L6 --> ENF1
+
+    subgraph ENF["③ Completion enforcement (machine-enforced)"]
+        direction TB
+        ENF1["--done → check-done · verify notes + artifact"]
+        ENF2["generate-status.py → status.md tables auto-generated · no human edits"]
+        ENF1 --> ENF2
+    end
+
+    ENF2 --> CI["CI 3-OS · pytest · smoke · bats · Pester · board drift · done-gate"]
+```
+
+Defensive lines throughout: `--auto` failure propagates non-zero · recursion guard (`CLAUDECODE`) · context budget `context-budget.py` (warning) · `design.md` is Codex-owned (Claude does not edit it).
+
 ## Structure
 
 ```
+├── QUICKREF.md                # Quick operating reference (routine entry point)
+├── AGENT.md                   # Shared agent protocol + state transitions (SoT)
 ├── CLAUDE.md                  # Claude operating rules
-├── AGENT.md                   # Shared agent protocol + state transitions
-├── collab.md                  # v2 review loop placeholder
+├── collab.md                  # v2 review loop reservation (placeholder)
+├── imp.md                     # Enhancement roadmap (SoT)
 ├── kb/                        # Knowledge base (local markdown vault)
-│   ├── index/                 # Status board, table of contents
-│   ├── concepts/              # Architecture, design principles
-│   ├── tasks/<task-id>/       # Per-task design & implementation docs
+│   ├── index/                 # status.md (generated board), table of contents
+│   ├── concepts/              # Architecture, workflow
+│   ├── tasks/<task-id>/       # design.md · implementation-notes.md · manifest.md
 │   └── artifacts/             # Output summaries
-├── runtime/                   # Scripts (Bash + PowerShell)
-│   ├── codex-design.sh/.ps1   # Request Codex design + post-validation
-│   └── claude-implement.sh/.ps1 # Design validation + implementation guide
-└── templates/                 # Document templates
+├── runtime/                   # Scripts + validator/tools (Bash · PowerShell · Python)
+│   ├── codex-design.{sh,ps1}      # Request Codex design + manifest auto-gen + validation
+│   ├── claude-implement.{sh,ps1}  # Design validation + implement guide + --done gate
+│   ├── validator/                 # design.md validation SoT (schema.json + Python)
+│   ├── lib/                       # python probe · session detect · invoke-codex/claude
+│   ├── context-budget.py          # Context budget warning (warning-only)
+│   ├── generate-status.py         # status.md board auto-gen + --check drift
+│   └── README.md                  # External CLI contract + exit-code spec
+├── templates/                 # design · implementation-notes · artifact · manifest templates
+└── tests/                     # pytest(validator·context_budget·status_board) + bats + pester + smoke
 ```
 
 ## Usage
@@ -35,49 +89,44 @@ This repository creates a repeatable **Codex (Designer) → Claude (Implementer)
 
 ```powershell
 # PowerShell
-./runtime/codex-design.ps1 task-002 "Design user auth module"
+./runtime/codex-design.ps1 task-004 "Design user auth module"
 
 # Bash
-./runtime/codex-design.sh task-002 "Design user auth module"
+./runtime/codex-design.sh task-004 "Design user auth module"
 ```
+
+> A `manifest.md` is auto-generated for each new task. Pass `--auto` to invoke Codex automatically.
 
 ### Step 2: Request implementation from Claude
 
 ```powershell
 # PowerShell
-./runtime/claude-implement.ps1 task-002
+./runtime/claude-implement.ps1 task-004
 
 # Bash
-./runtime/claude-implement.sh task-002
+./runtime/claude-implement.sh task-004
 ```
+
+### Step 3: Completion check (after implementation, optional)
+
+```powershell
+# PowerShell
+./runtime/claude-implement.ps1 task-004 -Done
+
+# Bash
+./runtime/claude-implement.sh --done task-004
+```
+
+> done-gate: verifies `implementation-notes.md` and `kb/artifacts/<id>-summary.md` are filled.
+> When a task completes, `python3 runtime/generate-status.py` refreshes the `kb/index/status.md` board automatically (CI checks for drift).
 
 ## Design Document Validation
 
-Both `claude-implement` and `codex-design` perform identical validation:
-
-| Check | Blocked when |
-|-------|-------------|
-| 7 required sections | Any missing |
-| Status | Not `ready` or `done` |
-| Placeholders | Any of 8 template placeholders remain |
-| Meta fields | Inputs/Outputs/Next step missing or empty |
-| Empty content | Tables or checkboxes still at default |
+Both `claude-implement` and `codex-design` perform identical validation. The single source of truth for checks and blocking conditions is [`runtime/validator/schema.json`](./runtime/validator/schema.json); a human-readable summary lives in [QUICKREF.md](./QUICKREF.md) under "검증 게이트".
 
 ## Document State Transitions
 
-```
-draft → ready → in-progress → done
-                                ↓
-                             blocked
-```
-
-| State | Meaning |
-|-------|---------|
-| `draft` | Template or incomplete |
-| `ready` | Design complete, ready for implementation |
-| `in-progress` | Implementation underway |
-| `done` | Completed |
-| `blocked` | Blocked |
+Design readiness (design.md) and implementation progress (implementation-notes.md) are **separated into two layers**. The single source of truth for the state model is [AGENT.md](./AGENT.md) "Document State Transitions".
 
 ## Environment
 
@@ -87,9 +136,11 @@ draft → ready → in-progress → done
 
 ## Roadmap
 
-- **v1 (current)**: Codex design → Claude implementation loop
-- **v2**: Codex review via `collab.md` → Claude re-implementation loop
-- **v2+**: External backend adapters (Notion, etc.)
+- **v1 (current)**: Codex design → Claude implementation loop + validation gate · context budget · generated status board · done-gate
+- **v2**: Codex review via `collab.md` → Claude re-implementation loop (imp.md Phase D)
+- **v2+**: External backend adapters (Notion, etc.) (imp.md Phase C, deferred)
+
+Detailed phased roadmap: [imp.md](./imp.md) "진행 현황".
 
 ## License
 

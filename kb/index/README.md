@@ -14,6 +14,7 @@ kb/
 ├── tasks/          작업 단위별 설계·구현 문서
 │   └── task-<NNN>/
 │       ├── design.md                설계 문서 (Codex 작성)
+│       ├── manifest.md              per-task 의존성 선언 (codex-design 자동 생성, Phase A 이후)
 │       └── implementation-notes.md  구현 노트 (Claude 작성)
 └── artifacts/      산출물 요약, 로그 링크, 결정 기록
     └── task-<NNN>-summary.md
@@ -22,5 +23,5 @@ kb/
 ## 규칙
 
 - 모든 task 관련 문서는 이 디렉터리 하위에만 작성한다.
-- 문서 스키마는 저장 백엔드(local_md, Notion 등)에 독립적으로 유지한다.
+- 저장 백엔드 추상화는 [concepts/architecture.md](../concepts/architecture.md) "저장 백엔드 추상화" 절을 참조한다.
 - 자세한 규약은 루트의 [AGENT.md](../../AGENT.md)를 참조한다.

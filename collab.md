@@ -12,12 +12,15 @@
 
 ## 예상 스키마 (v2)
 
+리뷰 상태(review status)는 task 상태와 **분리된 별도 필드**다 (imp.md Phase D).
+예약 enum: `pending | request-changes | approved | rejected`.
+
 ```markdown
 ## Review: task-<NNN> — <YYYY-MM-DD>
 
 - **Reviewer**: Codex
 - **Target**: kb/tasks/task-<NNN>/implementation-notes.md
-- **Verdict**: approve | request-changes | reject
+- **Review status**: pending | request-changes | approved | rejected
 - **Feedback**:
   - (리뷰 내용)
 - **Action required**:
@@ -27,4 +30,6 @@
 ## 훅 인터페이스 (v2 예약)
 
 - 리뷰 완료 시 Claude에게 알림을 보내는 훅 연결 지점
-- 리뷰 결과에 따라 자동으로 task status를 갱신하는 로직 연결 지점
+- **no-auto-revert 게이트**(imp.md Phase D): `request-changes` 가 나와도 task status 를
+  **자동으로 되돌리지 않는다**. review status 만 기록하고, 구현자가 다음 액션을 판단한다.
+  `done` 으로 최종 간주하려면 최신 review 가 `approved` 여야 한다.

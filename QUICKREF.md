@@ -1,0 +1,46 @@
+# QUICKREF — 빠른 운영 참조 (routine fast-path)
+
+> **Load**: 일반 task 는 이 파일 + `kb/tasks/<id>/manifest.md` + `kb/tasks/<id>/design.md` 만 읽으면 충분하다.
+> 예외·상세 규칙이 필요할 때만 [AGENT.md](./AGENT.md)(공통 규약·상태 전이 **정본**) / [CLAUDE.md](./CLAUDE.md)(구현자 규칙)으로 에스컬레이션한다.
+
+## 역할
+- **Codex** = 설계자 → `kb/tasks/<id>/design.md` 작성
+- **Claude** = 구현자 → design.md 검증 후 구현, 결과를 `kb/tasks/<id>/implementation-notes.md` 에 기록
+
+## 기본 로드 세트 (per task)
+1. `QUICKREF.md` (이 파일)
+2. `kb/tasks/<id>/manifest.md` — 이 task 가 실제로 의존하는 입력/개념/관련 파일만 나열
+3. `kb/tasks/<id>/design.md` — 설계 (구현 대상)
+
+manifest 의 `concepts_needed` / `related_files` 에 적힌 것만 추가로 연다. **전부 읽지 않는다.**
+
+## 상태 모델 (요약 — 정본은 AGENT.md "문서 상태 전이")
+- **design.md `Status`** = 설계 준비도: `draft → ready → done` (+ `blocked`). `in-progress` 는 design.md 에 쓰지 않는다.
+- **implementation-notes.md** = 구현 진행도: `in-progress → done` (+ `blocked`).
+- Claude 는 `Status: ready` 또는 `done` 인 design.md 만 구현한다.
+
+## 검증 게이트 (구현 시작 전 필수)
+```
+python3 runtime/validator/cli.py kb/tasks/<id>/design.md
+```
+통과 조건: 필수 7섹션 존재 · placeholder 없음 · 빈 테이블/체크박스 없음 · Inputs/Outputs/Next step 채워짐.
+종료코드 `0`=통과 / `1`=설계 보완 필요 / `2`=환경 오류(Python 미설치 등).
+
+## 러너 명령
+```
+# 설계 (Codex)                              # 구현 (Claude)
+runtime/codex-design.sh <id> "<desc>"       runtime/claude-implement.sh <id>
+```
+- 자동 호출: `--auto` (또는 `*_AUTO=1`). 세션 내부에서는 재귀 가드가 막으며 `*_AUTO_FORCE=1` 로만 우회한다.
+- `--auto` 실패(CLI 부재/비정상 종료)는 non-zero 로 전파된다(방어적).
+
+## 컨텍스트 예산 (경고 전용)
+```
+python3 runtime/context-budget.py <id>
+```
+기본 로드 세트 vs baseline(AGENT+CLAUDE+design)의 바이트/토큰 추정을 리포트한다. fail gate 아님.
+
+## 출력 규칙
+모든 task 산출물은 `kb/` 하위에만 작성한다. 구현 완료 시 순서대로 갱신:
+`implementation-notes.md` → `kb/artifacts/<id>-summary.md` → `python3 runtime/generate-status.py`
+(status.md 는 직접 편집하지 않는다 — 생성 블록 내용은 generate-status.py 가 관리).
