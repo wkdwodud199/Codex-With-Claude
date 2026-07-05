@@ -36,23 +36,30 @@ BeforeAll {
         Copy-Item (Join-Path $script:Repo "runtime\lib")       (Join-Path $work "runtime\") -Recurse
         Copy-Item (Join-Path $script:Repo "runtime\claude-implement.ps1") (Join-Path $work "runtime\")
         Copy-Item (Join-Path $script:Repo "runtime\codex-design.ps1")     (Join-Path $work "runtime\")
-        Copy-Item (Join-Path $script:Repo "templates\*") (Join-Path $work "templates\")
+        Copy-Item (Join-Path $script:Repo "runtime\render-prompt.py")     (Join-Path $work "runtime\")
+        New-Item -ItemType Directory -Path (Join-Path $work "runtime\config") -Force | Out-Null
+        Copy-Item (Join-Path $script:Repo "runtime\config\model-profiles.json") (Join-Path $work "runtime\config\")
+        # templates/prompts/ 하위 디렉터리 포함 복사 (task-004)
+        Copy-Item (Join-Path $script:Repo "templates\*") (Join-Path $work "templates\") -Recurse
         # git preflight(D3)가 통과하도록 작업 디렉터리를 git 저장소로 만든다.
         & git init -q $work 2>$null | Out-Null
         return $work
     }
 
-    # codex 스텁(exit 0) 을 bin 디렉터리에 설치하고 그 경로를 돌려준다.
+    # codex 스텁을 bin 디렉터리에 설치하고 그 경로를 돌려준다.
+    # task-004: 러너의 --version preflight 에 응답해야 한다 (버전 주입 가능).
     function Install-CodexStub {
-        param([string]$Work)
+        param([string]$Work, [string]$Version = "99.0.0")
         $binDir = Join-Path $Work "bin"
         New-Item -ItemType Directory -Path $binDir -Force | Out-Null
         if ($script:IsWin) {
             # PowerShell이 codex.cmd / codex 를 Application 으로 찾도록 .cmd 스텁 생성.
-            Set-Content -Path (Join-Path $binDir "codex.cmd") -Value "@echo off`r`nexit /b 0" -Encoding ASCII
+            $cmd = "@echo off`r`nif `"%~1`"==`"--version`" ( echo codex-cli $Version & exit /b 0 )`r`nexit /b 0"
+            Set-Content -Path (Join-Path $binDir "codex.cmd") -Value $cmd -Encoding ASCII
         } else {
             $stub = Join-Path $binDir "codex"
-            Set-Content -Path $stub -Value "#!/usr/bin/env bash`nexit 0" -Encoding ASCII
+            $body = "#!/usr/bin/env bash`nif [ `"`${1:-}`" = `"--version`" ]; then echo `"codex-cli $Version`"; exit 0; fi`nexit 0"
+            Set-Content -Path $stub -Value $body -Encoding ASCII
             & chmod +x $stub 2>$null | Out-Null
         }
         return $binDir
@@ -160,12 +167,13 @@ Describe "codex-design.ps1" -Skip:([string]::IsNullOrEmpty($script:Shell)) {
         New-Item -ItemType Directory -Path $binDir -Force | Out-Null
         $taskDir = Join-Path $script:Work "kb\tasks\task-e"
         if ($script:IsWin) {
-            # Windows: codex.cmd 스텁이 유효 design 을 복사 후 exit 7
-            $cmd = "@echo off`r`nmkdir `"$taskDir`" 2>nul`r`ncopy /y `"$($script:GoodFixture)`" `"$taskDir\design.md`" >nul`r`nexit /b 7"
+            # Windows: codex.cmd 스텁이 --version 응답 후, 유효 design 을 복사하고 exit 7
+            $cmd = "@echo off`r`nif `"%~1`"==`"--version`" ( echo codex-cli 99.0.0 & exit /b 0 )`r`nmkdir `"$taskDir`" 2>nul`r`ncopy /y `"$($script:GoodFixture)`" `"$taskDir\design.md`" >nul`r`nexit /b 7"
             Set-Content -Path (Join-Path $binDir "codex.cmd") -Value $cmd -Encoding ASCII
         } else {
             $stub = Join-Path $binDir "codex"
-            Set-Content -Path $stub -Value "#!/usr/bin/env bash`nmkdir -p '$taskDir'`ncp '$($script:GoodFixture)' '$taskDir/design.md'`nexit 7" -Encoding ASCII
+            $body = "#!/usr/bin/env bash`nif [ `"`${1:-}`" = `"--version`" ]; then echo `"codex-cli 99.0.0`"; exit 0; fi`nmkdir -p '$taskDir'`ncp '$($script:GoodFixture)' '$taskDir/design.md'`nexit 7"
+            Set-Content -Path $stub -Value $body -Encoding ASCII
             & chmod +x $stub 2>$null | Out-Null
         }
         $pathWithStub = "$binDir$([IO.Path]::PathSeparator)$($script:SysPath)"
@@ -173,5 +181,53 @@ Describe "codex-design.ps1" -Skip:([string]::IsNullOrEmpty($script:Shell)) {
             -ExtraEnv @{ PATH = $pathWithStub }
         $r.ExitCode | Should -Not -Be 0
         $r.Output | Should -Match "codex 자동 호출이 실패"
+    }
+
+    # task-004: 강제 플래그(-m/-c) 전달 + --skip-git-repo-check 부재 + provenance 기록
+    It "-Auto full pass -> pinned flags (-m/-c) + provenance recorded (task-004)" {
+        $binDir = Join-Path $script:Work "bin"
+        New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+        $taskDir = Join-Path $script:Work "kb\tasks\task-f"
+        $argsLog = Join-Path $script:Work "codex-args.log"
+        if ($script:IsWin) {
+            $cmd = "@echo off`r`nif `"%~1`"==`"--version`" ( echo codex-cli 99.0.0 & exit /b 0 )`r`necho %* >> `"$argsLog`"`r`nmkdir `"$taskDir`" 2>nul`r`ncopy /y `"$($script:GoodFixture)`" `"$taskDir\design.md`" >nul`r`nexit /b 0"
+            Set-Content -Path (Join-Path $binDir "codex.cmd") -Value $cmd -Encoding ASCII
+        } else {
+            $stub = Join-Path $binDir "codex"
+            $body = "#!/usr/bin/env bash`nif [ `"`${1:-}`" = `"--version`" ]; then echo `"codex-cli 99.0.0`"; exit 0; fi`nprintf '%s\n' `"`$*`" >> '$argsLog'`nmkdir -p '$taskDir'`ncp '$($script:GoodFixture)' '$taskDir/design.md'`nexit 0"
+            Set-Content -Path $stub -Value $body -Encoding ASCII
+            & chmod +x $stub 2>$null | Out-Null
+        }
+        $pathWithStub = "$binDir$([IO.Path]::PathSeparator)$($script:SysPath)"
+        $r = Invoke-Script -ScriptPath $script:ScriptPath -ScriptArgs @("task-f", "sample", "-Auto") `
+            -ExtraEnv @{ PATH = $pathWithStub }
+        $r.ExitCode | Should -Be 0
+        $stubArgs = Get-Content $argsLog -Raw
+        $stubArgs | Should -Match "-m gpt-5\.5"
+        $stubArgs | Should -Match "model_reasoning_effort=xhigh"
+        $stubArgs | Should -Match "--sandbox workspace-write"
+        $stubArgs | Should -Not -Match "--skip-git-repo-check"
+        (Get-Content (Join-Path $taskDir "manifest.md") -Raw) | Should -Match "design=codex gpt-5\.5/xhigh"
+    }
+
+    # task-004: 프로필 부재 -> --auto 거부 (조용한 기본값 금지)
+    It "profile missing -> -Auto refused (no silent default) (task-004)" {
+        $binDir = Install-CodexStub -Work $script:Work
+        Remove-Item (Join-Path $script:Work "runtime\config\model-profiles.json") -Force
+        $pathWithStub = "$binDir$([IO.Path]::PathSeparator)$($script:SysPath)"
+        $r = Invoke-Script -ScriptPath $script:ScriptPath -ScriptArgs @("task-g", "sample", "-Auto") `
+            -ExtraEnv @{ PATH = $pathWithStub }
+        $r.ExitCode | Should -Not -Be 0
+        $r.Output | Should -Match "프로필"
+    }
+
+    # task-004: 최소 CLI 버전 미달 -> 호출 전 preflight 실패
+    It "codex CLI version below minimum -> preflight fail (task-004)" {
+        $binDir = Install-CodexStub -Work $script:Work -Version "0.1.0"
+        $pathWithStub = "$binDir$([IO.Path]::PathSeparator)$($script:SysPath)"
+        $r = Invoke-Script -ScriptPath $script:ScriptPath -ScriptArgs @("task-h", "sample", "-Auto") `
+            -ExtraEnv @{ PATH = $pathWithStub }
+        $r.ExitCode | Should -Not -Be 0
+        $r.Output | Should -Match "버전"
     }
 }

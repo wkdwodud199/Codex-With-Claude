@@ -122,6 +122,15 @@ if [ "$validator_rc" -ge 2 ]; then
     echo "환경 오류 (Python 미설치/IO 오류 등). 설계 검증을 수행할 수 없습니다."
     exit "$validator_rc"
 elif [ "$validator_rc" -eq 0 ]; then
+    # provenance (task-004): --auto 호출 성공 + 검증 통과 시에만 manifest 에 기록.
+    if [ "$invoke_rc" -eq 0 ] && [ -n "${CWC_PROV_LINE:-}" ]; then
+        if [ -f "$MANIFEST_FILE" ]; then
+            printf -- '- **generated_by**: %s\n' "$CWC_PROV_LINE" >> "$MANIFEST_FILE"
+            echo "[OK] provenance 기록: $MANIFEST_FILE"
+        else
+            echo "[WARN] manifest 없음 — provenance 기록 건너뜀: $MANIFEST_FILE"
+        fi
+    fi
     echo ""
     echo "--- 다음 단계 ---"
     echo "1. $DESIGN_FILE 의 설계 내용을 최종 검토하세요."

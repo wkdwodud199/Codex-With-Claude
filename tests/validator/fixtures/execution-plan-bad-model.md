@@ -2,16 +2,16 @@
 
 > Status: ready
 > Inputs: 초기 계획 문서
-> Outputs: 검증 통과 기본 샘플
-> Next step: Claude가 이 문서를 읽고 구현 시작
+> Outputs: 실행 계획 화이트리스트 위반 샘플
+> Next step: 검증기가 이 문서를 거부해야 함
 
 ## 목표 (Objective)
 
-검증기가 정상 설계 문서에 대해 통과하는지 확인.
+화이트리스트에 없는 implement_model 이 거부되는지 확인.
 
 ## 범위 (Scope)
 
-- 포함: 검증기 통과 경로
+- 포함: 검증기 실패 경로
 - 제외: 실제 구현
 
 ## 제약 (Constraints)
@@ -25,9 +25,9 @@
 
 ## 실행 계획 (Execution Plan)
 
-- implement_model: claude-opus-4-8
-- implement_effort: xhigh
-- routing_reason: 검증 통과 샘플 — 실행 계획 라우팅 정상 경로 검증용
+- implement_model: gpt-5.5
+- implement_effort: ultra
+- routing_reason: 잘못된 모델/effort 지정 샘플
 
 | unit | 파일 범위 | depends_on | group |
 |------|-----------|------------|-------|
@@ -37,12 +37,11 @@
 
 | 파일/모듈 | 변경 유형 | 설명 |
 |-----------|-----------|------|
-| tests/validator/fixtures/good.md | create | 정상 샘플 |
+| tests/validator/fixtures/execution-plan-bad-model.md | create | 위반 샘플 |
 
 ## 테스트 기준 (Test Criteria)
 
-- [x] 검증기가 0 코드 반환
-- [ ] 추가 케이스 미적용
+- [x] 검증기가 1 코드 반환
 
 ## 오픈 이슈 (Open Issues)
 

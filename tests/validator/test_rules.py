@@ -120,6 +120,81 @@ def test_golden_task_001_passes(schema):
     assert errors == [], f"golden task-001 failed: {[e.message for e in errors]}"
 
 
+# ---------------------------------------------------------------------------
+# 실행 계획 (Execution Plan) 규칙 — task-004
+# whitelist 는 cli.py 가 profiles.json 에서 로드해 주입하므로, 단위 테스트는
+# 동일 형태의 dict 를 직접 주입한다 (규칙 모듈은 IO 없음).
+# ---------------------------------------------------------------------------
+
+EP_WHITELIST = {
+    "allowed_models": ["claude-fable-5", "claude-opus-4-8"],
+    "allowed_efforts": ["medium", "high", "xhigh", "max"],
+}
+
+
+def _ep_errors(filename, schema, task_id=None, whitelist=EP_WHITELIST):
+    from validator.rules import check_execution_plan
+
+    text = (FIXTURES / filename).read_text(encoding="utf-8")
+    doc = parse_with_schema(text, schema)
+    return check_execution_plan(doc, schema, task_id=task_id, whitelist=whitelist)
+
+
+def test_execution_plan_good_fixture_passes(schema):
+    assert _ep_errors("good.md", schema) == []
+
+
+def test_execution_plan_bad_model_and_effort_flagged(schema):
+    codes = [e.code for e in _ep_errors("execution-plan-bad-model.md", schema)]
+    assert "execution_plan_model_not_allowed" in codes
+    assert "execution_plan_effort_not_allowed" in codes
+
+
+def test_execution_plan_missing_table_flagged(schema):
+    codes = [e.code for e in _ep_errors("execution-plan-missing-table.md", schema)]
+    assert "execution_plan_table_missing" in codes
+
+
+def test_execution_plan_absent_legacy_ok(schema):
+    assert _ep_errors("legacy-no-execution-plan.md", schema, task_id="task-001") == []
+
+
+def test_execution_plan_absent_nonlegacy_flagged(schema):
+    codes = [e.code for e in _ep_errors("execution-plan-absent-nonlegacy.md", schema, task_id="task-999")]
+    assert "execution_plan_missing" in codes
+
+
+def test_execution_plan_absent_unknown_task_id_flagged(schema):
+    """task id 파생 실패 시 legacy 예외를 적용하지 않는다 (설계 5단계, 방어)."""
+    codes = [e.code for e in _ep_errors("legacy-no-execution-plan.md", schema, task_id=None)]
+    assert "execution_plan_missing" in codes
+
+
+def test_execution_plan_template_placeholders_flagged(schema):
+    """템플릿의 실행 계획 placeholder 가 실제 값으로 교체되지 않으면 걸린다."""
+    from validator.rules import check_execution_plan
+
+    repo_root = FIXTURES.parent.parent.parent
+    text = (repo_root / "templates" / "design.md").read_text(encoding="utf-8")
+    doc = parse_with_schema(text, schema)
+    codes = [e.code for e in check_execution_plan(doc, schema, task_id=None, whitelist=EP_WHITELIST)]
+    assert "execution_plan_field_placeholder" in codes
+
+
+def test_golden_task_004_execution_plan_passes(schema):
+    """task-004 설계 자체가 실행 계획 스키마의 첫 dogfood — 회귀 고정."""
+    from validator.rules import check_execution_plan, extract_execution_plan
+
+    repo_root = FIXTURES.parent.parent.parent
+    text = (repo_root / "kb" / "tasks" / "task-004" / "design.md").read_text(encoding="utf-8")
+    doc = parse_with_schema(text, schema)
+    plan = extract_execution_plan(doc, schema)
+    assert plan is not None
+    assert plan["implement_model"] == "claude-opus-4-8"
+    assert plan["implement_effort"] == "xhigh"
+    assert check_execution_plan(doc, schema, task_id="task-004", whitelist=EP_WHITELIST) == []
+
+
 def test_raw_template_fails(schema):
     repo_root = FIXTURES.parent.parent.parent
     template = repo_root / "templates" / "design.md"

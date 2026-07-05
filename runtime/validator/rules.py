@@ -268,6 +268,142 @@ def check_diagnostics(doc: ParsedDoc, schema: Dict[str, Any]) -> List[Validation
     ]
 
 
+# 실행 계획 필드 라인: '- implement_model: `claude-opus-4-8`' / '- **routing_reason**: ...'
+_EP_FIELD_RE = re.compile(
+    r"^\s*-\s*(?:\*\*)?(implement_model|implement_effort|routing_reason)(?:\*\*)?\s*:\s*(.*)$"
+)
+
+
+def extract_execution_plan(doc: ParsedDoc, schema: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """실행 계획 섹션의 필드 dict 를 반환한다. 섹션 자체가 없으면 None.
+
+    섹션은 있으나 필드가 없으면 빈 dict — '부재(None)' 와 구분해
+    호출자(라우터/규칙)가 각각 다른 오류를 낼 수 있게 한다.
+    """
+    ep_cfg = schema.get("execution_plan") or {}
+    section = ep_cfg.get("section", "실행 계획 (Execution Plan)")
+    titles = [title for _, title in doc.sections]
+    if section not in titles:
+        return None
+    fields: Dict[str, str] = {}
+    for line in _section_body_lines(doc, section):
+        m = _EP_FIELD_RE.match(line)
+        if m and m.group(1) not in fields:
+            fields[m.group(1)] = m.group(2).strip().strip("`").strip()
+    return fields
+
+
+def check_execution_plan(
+    doc: ParsedDoc,
+    schema: Dict[str, Any],
+    task_id: Optional[str] = None,
+    whitelist: Optional[Dict[str, List[str]]] = None,
+) -> List[ValidationError]:
+    """실행 계획(Execution Plan) 규칙 — task-004 설계 주도 라우팅의 게이트.
+
+    - 섹션 부재: legacy(task-001~003) 만 허용. task_id 파생 실패 시 예외 미적용(방어).
+    - 섹션 존재: 필수 필드 채움 + (whitelist 제공 시) model/effort 화이트리스트 검사
+      + 병렬화 표(필수 컬럼, 데이터 행 >= 1) 검사.
+    whitelist 는 cli.py 가 profiles.json 에서 로드해 주입한다 (규칙 모듈은 IO 없음).
+    """
+    ep_cfg = schema.get("execution_plan")
+    if not ep_cfg:
+        return []
+    section = ep_cfg["section"]
+    plan = extract_execution_plan(doc, schema)
+
+    if plan is None:
+        legacy = set(ep_cfg.get("legacy_missing_allowed", []))
+        if task_id and task_id in legacy:
+            return []
+        return [
+            ValidationError(
+                code="execution_plan_missing",
+                message=(
+                    f"[실행 계획 누락] '{section}' 섹션이 없습니다. "
+                    "implement_model/implement_effort/routing_reason 과 병렬화 표를 지정하세요."
+                ),
+            )
+        ]
+
+    errors: List[ValidationError] = []
+    placeholders = set(schema.get("placeholders", []))
+    for field_name in ep_cfg.get("required_fields", []):
+        value = (plan.get(field_name) or "").strip()
+        if not value:
+            errors.append(
+                ValidationError(
+                    code="execution_plan_field_missing",
+                    message=f"[실행 계획] '{field_name}' 필드가 없거나 비어 있습니다.",
+                )
+            )
+        elif value in placeholders:
+            errors.append(
+                ValidationError(
+                    code="execution_plan_field_placeholder",
+                    message=f"[실행 계획] '{field_name}' 값이 템플릿 placeholder입니다: '{value}'",
+                )
+            )
+
+    if whitelist:
+        allowed_models = whitelist.get("allowed_models") or []
+        allowed_efforts = whitelist.get("allowed_efforts") or []
+        model = (plan.get("implement_model") or "").strip()
+        effort = (plan.get("implement_effort") or "").strip()
+        if model and allowed_models and model not in allowed_models:
+            errors.append(
+                ValidationError(
+                    code="execution_plan_model_not_allowed",
+                    message=f"[실행 계획] implement_model '{model}' 은 화이트리스트에 없습니다: {allowed_models}",
+                )
+            )
+        if effort and allowed_efforts and effort not in allowed_efforts:
+            errors.append(
+                ValidationError(
+                    code="execution_plan_effort_not_allowed",
+                    message=f"[실행 계획] implement_effort '{effort}' 은 화이트리스트에 없습니다: {allowed_efforts}",
+                )
+            )
+
+    required_cols = ep_cfg.get("parallel_table_columns", [])
+    header: Optional[List[str]] = None
+    data_rows = 0
+    for line in _section_body_lines(doc, section):
+        if not _TABLE_ROW_RE.match(line):
+            continue
+        if _TABLE_SEPARATOR_RE.match(line.strip()):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if header is None:
+            header = cells
+        elif any(cells):
+            data_rows += 1
+    if header is None:
+        errors.append(
+            ValidationError(
+                code="execution_plan_table_missing",
+                message=f"[실행 계획] 병렬화 표가 없습니다. 컬럼: {' / '.join(required_cols)}",
+            )
+        )
+    else:
+        missing_cols = [c for c in required_cols if c not in header]
+        if missing_cols:
+            errors.append(
+                ValidationError(
+                    code="execution_plan_table_missing",
+                    message=f"[실행 계획] 병렬화 표에 필수 컬럼이 없습니다: {missing_cols}",
+                )
+            )
+        elif data_rows < 1:
+            errors.append(
+                ValidationError(
+                    code="execution_plan_table_empty",
+                    message="[실행 계획] 병렬화 표에 데이터 행이 없습니다 (unit 을 1개 이상 기입하세요).",
+                )
+            )
+    return errors
+
+
 def run_all_rules(doc: ParsedDoc, schema: Dict[str, Any]) -> List[ValidationError]:
     errors: List[ValidationError] = []
     errors.extend(check_sections(doc, schema))

@@ -14,6 +14,8 @@
 | `lib/common.{sh,ps1}` | python probe, 세션 감지, truthy 헬퍼 |
 | `lib/invoke-claude.{sh,ps1}` | `claude` CLI 자동 호출 로직 (재귀 가드 포함) |
 | `lib/invoke-codex.{sh,ps1}` | `codex` CLI 자동 호출 로직 (재귀 가드 + 샌드박스) |
+| `render-prompt.py` | 프로필 조회 · implement 라우팅 · CLI 버전 preflight · 프롬프트 렌더 (task-004) |
+| `config/model-profiles.json` | phase별 모델/effort **강제 프로필 SSOT** — design 정적 강제, implement 는 design-directed |
 | `context-budget.py` | 기본 로드 세트 vs baseline 바이트/토큰 비교 — 경고 전용 (warning-only) |
 | `generate-status.py` | `kb/index/status.md` 활성/완료 표 재생성 + `--check` drift 검사 |
 
@@ -24,19 +26,33 @@
 
 ### `claude`
 
-- 호출 형태: `claude -p "<prompt>"`
+- 호출 형태: `claude -p "<prompt>" --model <model> --effort <effort>` — **항상 명시** (task-004).
+  - model/effort 는 design.md 의 `실행 계획 (Execution Plan)` 이 라우팅한다 (design-directed).
+  - 실행 계획 부재는 legacy(task-001~003)만 허용 — 프로필 기본값(`claude-opus-4-8/high`)으로
+    라우팅하며 `[WARN]` 로그 + provenance(`route=default`) 를 남긴다.
+  - 선택 가능 값은 `config/model-profiles.json` 의 `allowed_models`/`allowed_efforts` 화이트리스트로 제한.
+- 최소 버전: **2.1.201** (`--model`/`--effort low|medium|high|xhigh|max`/`--fallback-model` 지원 기준).
+  preflight(`render-prompt.py check-cli-version`) 미달 시 호출하지 않고 실패한다.
+- design 레인 교차검증(claude) 프로필은 `claude-fable-5/max` + `--fallback-model claude-opus-4-8`
+  (**design 한정**; `--fallback-model` 은 effort 를 바꾸지 않으므로 폴백도 max 로 실행된다).
+  폴백 발동 여부를 판별할 수 없으면 해당 auto 경로는 실패 처리한다 (조용한 폴백 금지).
 - 용도: 구현자(implementer) 자동 호출 (`claude-implement --auto`).
 - 설치/인증: Claude Code CLI. 인증은 CLI 자체 설정을 따른다.
 - 프롬프트는 design.md 내용을 인라인하지 않고 **경로만** 전달한다 (컨텍스트 절약).
+  프롬프트 본문의 단일 원천은 `templates/prompts/implement.md` (render-prompt.py 가 렌더).
 
 ### `codex`
 
-- 호출 형태: `codex exec --sandbox workspace-write -C "<project-root>" "<prompt>"`
+- 호출 형태: `codex exec --sandbox workspace-write -C "<root>" -m <model> -c model_reasoning_effort=<effort> "<prompt>"`
+  — 모델/effort **항상 명시** (task-004; design 정적 프로필 `gpt-5.5/xhigh`).
   - **`--skip-git-repo-check` 는 사용하지 않는다** (이 레포는 git 저장소이며, git 안전망을 복원한다).
-  - **`--sandbox workspace-write`** 로 codex 의 쓰기 범위를 워크스페이스로 제한한다 (codex 0.137+ 지원).
+  - **`--sandbox workspace-write`** 로 codex 의 쓰기 범위를 워크스페이스로 제한한다.
   - 설계 생성기는 `kb/tasks/<id>/` 아래 파일 하나만 쓰면 되므로 넓은 쓰기 표면이 필요 없다.
+  - 프롬프트 본문의 단일 원천은 `templates/prompts/design.md` — 필수 섹션 목록은
+    렌더 시점에 `validator/schema.json` 에서 주입된다 (드리프트 불가).
 - 용도: 설계자(designer) 자동 호출 (`codex-design --auto`).
-- 최소 버전: **codex 0.137** (관찰 기준). `--sandbox` 옵션이 이 버전에서 지원된다.
+- 최소 버전: **codex 0.142.4** (`-m`, `-c model_reasoning_effort=` 지원 기준).
+  preflight 미달 시 호출하지 않고 실패한다.
 - 설치/인증: Codex CLI. 인증은 CLI 자체 설정을 따른다.
 - **preflight**: auto 호출 전 codex 존재 여부를 점검하고, 부재 시 자동 동작 실패로 처리한다(아래 종료 코드 참조).
 
@@ -60,6 +76,20 @@
 | `--auto` + 재귀 가드 발동 (Claude/Codex 세션 내부) | `0` | 의도된 **안전** 스킵 (중첩 세션 방지) |
 | `--auto` + 대상 CLI **부재** | **non-zero** | 요청된 자동 동작을 **수행하지 못한 실패** |
 | `--auto` + CLI 호출했으나 non-zero 반환 | **그 코드 전파** | 하위 CLI 의 실패를 삼키지 않는다 |
+| `--auto` + 프로필 부재/해석 실패 (task-004) | **non-zero (2)** | 조용한 기본값 금지 — 강제 대상이 불명확하면 실행하지 않는다 |
+| `--auto` + CLI 버전 preflight 미달 (task-004) | **non-zero (1)** | 필요한 플래그(`--effort`, `-c`)가 없는 구버전 호출 방지 |
+| `--auto` + 실행 계획 라우팅 실패 (claude) | **non-zero** | 비legacy 에서 실행 계획 부재/화이트리스트 위반 |
+
+### provenance (task-004)
+
+`--auto` 호출이 성공하면 러너가 `kb/tasks/<id>/manifest.md` 에 한 줄을 추가한다:
+
+```
+- **generated_by**: design=codex gpt-5.5/xhigh @codex 0.142.4, 2026-07-05 (fallback=none)
+- **generated_by**: implement=claude claude-opus-4-8/xhigh @claude 2.1.201, 2026-07-05 (route=execution-plan)
+```
+
+codex 레인은 **검증 통과 후에만** 기록한다. manifest 가 없으면 `[WARN]` 후 건너뛴다(파일 무단 생성 금지).
 
 > 재귀 가드: `CLAUDECODE` / `CLAUDE_CODE_SESSION_ID` / `CLAUDE_CODE_SESSION` / `CLAUDE_CODE` 중 하나라도 설정되면
 > 세션 내부로 간주해 `--auto` 를 거부한다. `*_AUTO_FORCE=1` (예: `CODEX_AUTO_FORCE=1`,

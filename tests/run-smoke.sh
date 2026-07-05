@@ -10,12 +10,15 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-mkdir -p "$WORK/runtime" "$WORK/templates" "$WORK/kb/tasks"
+mkdir -p "$WORK/runtime/config" "$WORK/templates" "$WORK/kb/tasks"
 cp -r "$REPO/runtime/validator" "$WORK/runtime/"
 cp -r "$REPO/runtime/lib"       "$WORK/runtime/"
 cp "$REPO/runtime/claude-implement.sh" "$WORK/runtime/"
 cp "$REPO/runtime/codex-design.sh" "$WORK/runtime/"
-cp "$REPO/templates/"* "$WORK/templates/"
+cp "$REPO/runtime/render-prompt.py" "$WORK/runtime/"
+cp "$REPO/runtime/config/model-profiles.json" "$WORK/runtime/config/"
+# templates/prompts/ 하위 디렉터리 포함 복사 (task-004)
+cp -R "$REPO/templates/." "$WORK/templates/"
 chmod +x "$WORK/runtime/"*.sh
 
 # codex-design 의 git preflight(D3)가 통과하도록 작업 디렉터리를 git 저장소로 만든다.
@@ -76,7 +79,6 @@ assert_status "--auto in session -> guard" 0 "$st"
 [[ "$out" == *"재귀 방지"* ]] || { echo "    recursion-guard banner missing"; fail=1; }
 
 # --auto with no claude CLI (outside session) -> warn, NON-ZERO (D2)
-# 요청한 자동 작업(claude 호출)을 수행하지 못했으므로 실패로 종료해야 한다.
 mkdir -p "$WORK/kb/tasks/task-y3"
 cp "$REPO/tests/validator/fixtures/good.md" "$WORK/kb/tasks/task-y3/design.md"
 set +e
@@ -121,8 +123,10 @@ assert_status "refuse overwrite" 1 "$st"
 [[ "$out" == *"이미 존재"* ]] || { echo "    missing '이미 존재'"; fail=1; }
 
 # --auto + codex stub on PATH + draft remains broken -> post-validation fails
+# (task-004: 스텁은 --version preflight 에 응답해야 한다)
 cat > "$WORK/codex" <<'EOF'
 #!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then echo "codex-cli 99.0.0"; exit 0; fi
 exit 0
 EOF
 chmod +x "$WORK/codex"
@@ -143,9 +147,9 @@ assert_status "default + codex stub -> skip (manual)" 1 "$st"
 [[ "$out" == *"수동 모드"* ]] || { echo "    manual-mode banner missing (codex)"; fail=1; }
 
 # --auto + codex 가 유효한 design 을 썼지만 non-zero 로 종료 -> 실패 전파 (D2)
-# (검증은 통과하더라도 codex 의 비정상 종료를 삼키지 않는지 확인하는 분기 119-122 커버)
 cat > "$WORK/codex" <<EOF
 #!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "codex-cli 99.0.0"; exit 0; fi
 mkdir -p "$WORK/kb/tasks/task-e"
 cp "$REPO/tests/validator/fixtures/good.md" "$WORK/kb/tasks/task-e/design.md"
 exit 7
@@ -160,6 +164,113 @@ if [ "$st" -ne 0 ] && [[ "$out" == *"codex 자동 호출이 실패"* ]]; then
 else
     printf '  [FAIL] %s (exit=%s, expected non-zero + 전파 배너)\n' "--auto + codex non-zero 전파 (D2)" "$st"
     fail=1
+fi
+
+
+# task-004: 모델/effort 강제 + 설계 주도 라우팅 + provenance smoke
+echo ""
+echo "== model/effort enforcement smoke (task-004) =="
+
+# (1) --auto 성공 경로: 강제 플래그(-m/-c) 전달 + --skip-git-repo-check 부재 + provenance 기록
+cat > "$WORK/codex" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "codex-cli 99.0.0"; exit 0; fi
+printf '%s\n' "\$*" >> "$WORK/codex-args.log"
+mkdir -p "$WORK/kb/tasks/task-f"
+cp "$REPO/tests/validator/fixtures/good.md" "$WORK/kb/tasks/task-f/design.md"
+exit 0
+EOF
+chmod +x "$WORK/codex"
+set +e
+out=$(env "${SCRUB[@]}" PATH="$WORK:/usr/bin:/bin" \
+    bash "$WORK/runtime/codex-design.sh" --auto task-f "sample" 2>&1); st=$?
+set -e
+assert_status "--auto full pass -> exit 0" 0 "$st"
+args=$(cat "$WORK/codex-args.log" 2>/dev/null || true)
+[[ "$args" == *"-m gpt-5.5"* ]] || { echo "    -m gpt-5.5 missing: $args"; fail=1; }
+[[ "$args" == *"model_reasoning_effort=xhigh"* ]] || { echo "    reasoning_effort=xhigh missing"; fail=1; }
+[[ "$args" == *"--sandbox workspace-write"* ]] || { echo "    sandbox flag missing"; fail=1; }
+[[ "$args" != *"--skip-git-repo-check"* ]] || { echo "    --skip-git-repo-check present (금지)"; fail=1; }
+grep -q "generated_by.*design=codex gpt-5.5/xhigh" "$WORK/kb/tasks/task-f/manifest.md" \
+    || { echo "    provenance missing in manifest"; fail=1; }
+
+# (2) claude --auto: 실행 계획 라우팅 (good.md -> claude-opus-4-8/xhigh) + provenance
+cat > "$WORK/claude" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "2.99.0 (Claude Code)"; exit 0; fi
+printf '%s\n' "\$*" >> "$WORK/claude-args.log"
+exit 0
+EOF
+chmod +x "$WORK/claude"
+mkdir -p "$WORK/kb/tasks/task-r"
+cp "$REPO/tests/validator/fixtures/good.md" "$WORK/kb/tasks/task-r/design.md"
+sed 's/task-<NNN>/task-r/g' "$WORK/templates/manifest.md" > "$WORK/kb/tasks/task-r/manifest.md"
+set +e
+out=$(env "${SCRUB[@]}" PATH="$WORK:/usr/bin:/bin" \
+    bash "$WORK/runtime/claude-implement.sh" --auto task-r 2>&1); st=$?
+set -e
+assert_status "claude --auto routed by execution plan" 0 "$st"
+args=$(cat "$WORK/claude-args.log" 2>/dev/null || true)
+[[ "$args" == *"--model claude-opus-4-8"* ]] || { echo "    --model 누락: $args"; fail=1; }
+[[ "$args" == *"--effort xhigh"* ]] || { echo "    --effort xhigh 누락"; fail=1; }
+grep -q "generated_by.*route=execution-plan" "$WORK/kb/tasks/task-r/manifest.md" \
+    || { echo "    provenance(route=execution-plan) missing"; fail=1; }
+
+# (3) legacy(실행 계획 부재) -> 기본값 라우팅 + WARN + provenance(route=default)
+rm -f "$WORK/claude-args.log"
+mkdir -p "$WORK/kb/tasks/task-001"
+cp "$REPO/tests/validator/fixtures/legacy-no-execution-plan.md" "$WORK/kb/tasks/task-001/design.md"
+sed 's/task-<NNN>/task-001/g' "$WORK/templates/manifest.md" > "$WORK/kb/tasks/task-001/manifest.md"
+set +e
+out=$(env "${SCRUB[@]}" PATH="$WORK:/usr/bin:/bin" \
+    bash "$WORK/runtime/claude-implement.sh" --auto task-001 2>&1); st=$?
+set -e
+assert_status "legacy no-plan -> default route" 0 "$st"
+[[ "$out" == *"기본값으로 라우팅"* ]] || { echo "    default-route WARN missing"; fail=1; }
+args=$(cat "$WORK/claude-args.log" 2>/dev/null || true)
+[[ "$args" == *"--effort high"* ]] || { echo "    default --effort high 누락: $args"; fail=1; }
+grep -q "generated_by.*route=default" "$WORK/kb/tasks/task-001/manifest.md" \
+    || { echo "    provenance(route=default) missing"; fail=1; }
+
+# (4) 프로필 부재 -> codex --auto 거부 (조용한 기본값 금지)
+mv "$WORK/runtime/config/model-profiles.json" "$WORK/model-profiles.json.bak"
+set +e
+out=$(env "${SCRUB[@]}" PATH="$WORK:/usr/bin:/bin" \
+    bash "$WORK/runtime/codex-design.sh" --auto task-g "sample" 2>&1); st=$?
+set -e
+if [ "$st" -ne 0 ] && [[ "$out" == *"프로필"* ]]; then
+    printf '  [PASS] %s\n' "profile missing -> codex --auto refused"
+else
+    printf '  [FAIL] %s (exit=%s)\n' "profile missing -> codex --auto refused" "$st"; fail=1
+fi
+
+# (5) 프로필 부재 -> claude 경로도 거부 (validator 게이트가 exit 2)
+set +e
+out=$(env "${SCRUB[@]}" PATH="$WORK:/usr/bin:/bin" \
+    bash "$WORK/runtime/claude-implement.sh" --auto task-r 2>&1); st=$?
+set -e
+if [ "$st" -ne 0 ] && [[ "$out" == *"프로필"* ]]; then
+    printf '  [PASS] %s\n' "profile missing -> claude gate refused"
+else
+    printf '  [FAIL] %s (exit=%s)\n' "profile missing -> claude gate refused" "$st"; fail=1
+fi
+mv "$WORK/model-profiles.json.bak" "$WORK/runtime/config/model-profiles.json"
+
+# (6) CLI 버전 미달 -> 호출 전 실패 (preflight)
+cat > "$WORK/codex" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then echo "codex-cli 0.1.0"; exit 0; fi
+exit 0
+EOF
+chmod +x "$WORK/codex"
+set +e
+out=$(env "${SCRUB[@]}" PATH="$WORK:/usr/bin:/bin" \
+    bash "$WORK/runtime/codex-design.sh" --auto task-h "sample" 2>&1); st=$?
+set -e
+if [ "$st" -ne 0 ] && [[ "$out" == *"버전"* ]]; then
+    printf '  [PASS] %s\n' "CLI version below minimum -> preflight fail"
+else
+    printf '  [FAIL] %s (exit=%s)\n' "CLI version below minimum -> preflight fail" "$st"; fail=1
 fi
 
 

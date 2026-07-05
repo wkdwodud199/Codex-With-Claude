@@ -103,6 +103,18 @@ Write-Host ""
 $invokeRc = [int](Invoke-ClaudeIfEnabled -TaskId $TaskId -DesignFile $DesignFile -ImplNotes $ImplNotes `
     -AutoMode $AutoMode -ProjectRoot $ProjectRoot)
 
+# provenance (task-004): 자동 호출이 실제 성공했을 때만 manifest 에 기록.
+$ManifestFile = Join-Path $TaskDir "manifest.md"
+if ($invokeRc -eq 0 -and $script:CwcProvLine) {
+    if (Test-Path $ManifestFile) {
+        [System.IO.File]::AppendAllText($ManifestFile,
+            "- **generated_by**: $($script:CwcProvLine)`n", [System.Text.UTF8Encoding]::new($false))
+        Write-Host "[OK] provenance 기록: $ManifestFile"
+    } else {
+        Write-Host "[WARN] manifest 없음 — provenance 기록 건너뜀: $ManifestFile" -ForegroundColor Yellow
+    }
+}
+
 # --- 구현 안내 출력 ---
 Write-Host ""
 Write-Host "============================================"

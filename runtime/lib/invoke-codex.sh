@@ -3,19 +3,27 @@
 #
 # source 전용. 내보내는 함수:
 #   invoke_codex_if_enabled <task-id> <design-file> <task-desc> <auto-mode> <project-root>
-#     - auto-mode  : "1" 이면 자동 호출 시도, 아니면 안내만.
-#     - return 0   : 호출 성공 또는 의도된 스킵 (수동 모드 / 재귀 가드 스킵).
-#     - return 1   : --auto 인데 CLI 부재 또는 호출 실패.
+#     - return 0  : 호출 성공 또는 의도된 스킵 (수동 모드 / 재귀 가드 스킵).
+#     - return 1  : --auto 인데 CLI 부재 / 버전 미달 / 정책 실패 / 호출 실패.
+#     - return 2  : 환경 오류 (python 부재, 프로필·프롬프트 IO/해석 오류).
 #
-#   D2 정책:
-#     - 수동 모드 스킵 / 재귀 가드 스킵은 의도된 동작이므로 exit 0.
-#     - --auto 인데 codex CLI 부재 → NON-ZERO.
-#     - --auto 로 호출했으나 CLI가 non-zero 반환 → 그 코드를 그대로 전파.
+#   task-004 (2층 라우팅 + 프롬프트 SSOT):
+#     - 모델/effort 는 runtime/config/model-profiles.json 에서 render-prompt.py 로 얻어
+#       항상 `-m <model> -c model_reasoning_effort=<effort>` 를 명시한다
+#       (사용자 전역 ~/.codex/config.toml 에 의존하지 않는다).
+#     - 프로필/렌더 실패 시 --auto 를 거부한다 (조용한 기본값 금지).
+#     - CLI 버전 preflight: 프로필의 min_cli_version 미달이면 호출하지 않고 실패.
+#     - 호출 성공 시 CWC_PROV_LINE 전역에 provenance 를 남긴다.
+#       러너가 검증 통과 후 manifest 에 기록한다.
+#
+# D2 정책:
+#   - 수동 모드 스킵 / 재귀 가드 스킵은 의도된 동작이므로 exit 0.
+#   - --auto 인데 codex CLI 부재 → NON-ZERO.
+#   - --auto 로 호출했으나 CLI가 non-zero 반환 → 그 코드를 그대로 전파.
 #
 # 재귀 가드:
 #   Claude Code 세션 내부에서 auto=1 요청 시 CODEX_AUTO_FORCE=1 없으면 거부.
-#   세션 감지는 CLAUDECODE(주) / CLAUDE_CODE_SESSION_ID 등으로 한다 (common.sh 참조).
-#   (Codex 호출 자체는 Claude 세션을 중첩하지 않지만 대칭성 위해 동일 규칙 유지.)
+#   세션 감지는 CLAUDECODE(주)/CLAUDE_CODE_SESSION_ID 등으로 한다 (common.sh 참조).
 
 _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=runtime/lib/common.sh
@@ -27,6 +35,7 @@ invoke_codex_if_enabled() {
     local task_desc="$3"
     local auto_mode="$4"
     local project_root="$5"
+    CWC_PROV_LINE=""
 
     if ! truthy "$auto_mode"; then
         echo "[INFO] 수동 모드입니다. Codex 자동 호출을 건너뜁니다."
@@ -48,35 +57,65 @@ invoke_codex_if_enabled() {
     fi
 
     # --- preflight: git 저장소 안에서만 자동 호출 (git 안전망 복원) ---
-    # --skip-git-repo-check 제거에 따라, codex가 거부하기 전에 먼저 확인한다.
     if ! git -C "$project_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         echo "[WARN] git 저장소가 아닙니다: $project_root"
         echo "       codex 자동 설계는 git 저장소 안에서만 실행합니다 (안전망)."
         return 1
     fi
 
-    echo "[INFO] Codex에게 설계 요청 중..."
-    echo ""
-    local prompt
-    prompt=$(cat <<EOF
-다음 작업에 대한 설계 문서를 작성해주세요.
-작업: $task_desc
-설계 문서 경로: $design_file
-참조할 기존 문서: $project_root/kb/concepts/
+    # --- 프로필/렌더러 (task-004): python 필요 ---
+    local py
+    if ! py=$(resolve_python); then
+        echo "[ERROR] Python 3 을 찾을 수 없습니다 (프로필/프롬프트 해석에 필요)."
+        echo "        Python 3.8+ 을 설치하세요: https://www.python.org/downloads/"
+        return 2
+    fi
+    local rp="$project_root/runtime/render-prompt.py"
 
-중요 규칙:
-- 템플릿의 모든 필수 섹션(목표, 범위, 제약, 구현 단계, 파일/모듈 영향, 테스트 기준, 오픈 이슈)을 빠짐없이 채우세요.
-- 모든 placeholder 안내문을 실제 내용으로 교체하세요.
-- 완성 후 문서 상단의 Status를 ready로 변경하세요.
-- Inputs, Outputs, Next step 필드를 구체적으로 채우세요.
-- 파일/모듈 영향 테이블과 테스트 기준 체크박스에 실제 항목을 기입하세요.
-EOF
-)
-    # codex 0.137: 제약된 샌드박스(workspace-write)로 비대화형 실행.
-    # 설계 생성기는 kb/tasks/<id>/ 아래 한 파일만 쓰면 되므로 full-auto 불필요.
-    # --skip-git-repo-check 제거로 codex의 git 안전망을 복원한다.
-    echo "" | codex exec --sandbox workspace-write -C "$project_root" "$prompt" < /dev/null
-    local rc=$?
+    local model effort rc
+    # shellcheck disable=SC2086
+    model=$($py "$rp" profile --phase design --cli codex --field model); rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "[ERROR] 프로필 해석 실패(model) — --auto 를 중단합니다 (조용한 기본값 금지)."
+        return "$rc"
+    fi
+    # shellcheck disable=SC2086
+    effort=$($py "$rp" profile --phase design --cli codex --field effort); rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "[ERROR] 프로필 해석 실패(effort) — --auto 를 중단합니다."
+        return "$rc"
+    fi
+
+    # --- CLI 버전 preflight ---
+    local ver_out cli_ver
+    ver_out=$(codex --version 2>&1 || true)
+    # shellcheck disable=SC2086
+    cli_ver=$($py "$rp" check-cli-version --phase design --cli codex --version-output "$ver_out"); rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "[ERROR] codex CLI 버전 preflight 실패 — 호출하지 않습니다. (감지: $(printf '%s' "$ver_out" | head -n1))"
+        return "$rc"
+    fi
+
+    # --- 프롬프트 렌더 (SSOT: templates/prompts/design.md + schema.json) ---
+    local prompt
+    # shellcheck disable=SC2086
+    prompt=$($py "$rp" render --phase design --task-id "$task_id" --design-file "$design_file" \
+        --task-desc "$task_desc" --project-root "$project_root"); rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "[ERROR] 프롬프트 렌더 실패 — --auto 를 중단합니다."
+        return "$rc"
+    fi
+
+    echo "[INFO] Codex에게 설계 요청 중... (model=$model, effort=$effort, cli=$cli_ver)"
     echo ""
-    return $rc
+    # codex 0.142+: 제약된 샌드박스(workspace-write) + 명시적 모델/effort 강제.
+    # --skip-git-repo-check 는 사용하지 않는다 (git 안전망 유지).
+    codex exec --sandbox workspace-write -C "$project_root" \
+        -m "$model" -c "model_reasoning_effort=$effort" "$prompt" < /dev/null
+    rc=$?
+    echo ""
+    if [ "$rc" -eq 0 ]; then
+        CWC_PROV_LINE="design=codex $model/$effort @codex $cli_ver, $(date +%Y-%m-%d) (fallback=none)"
+    fi
+    return "$rc"
 }

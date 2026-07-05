@@ -130,6 +130,17 @@ invoke_claude_if_enabled "$TASK_ID" "$DESIGN_FILE" "$IMPL_NOTES" "$AUTO_MODE" "$
 invoke_rc=$?
 set -e
 
+# provenance (task-004): 자동 호출이 실제 성공했을 때만 manifest 에 기록.
+MANIFEST_FILE="$TASK_DIR/manifest.md"
+if [ "$invoke_rc" -eq 0 ] && [ -n "${CWC_PROV_LINE:-}" ]; then
+    if [ -f "$MANIFEST_FILE" ]; then
+        printf -- '- **generated_by**: %s\n' "$CWC_PROV_LINE" >> "$MANIFEST_FILE"
+        echo "[OK] provenance 기록: $MANIFEST_FILE"
+    else
+        echo "[WARN] manifest 없음 — provenance 기록 건너뜀: $MANIFEST_FILE"
+    fi
+fi
+
 # --- 구현 안내 출력 ---
 echo ""
 echo "============================================"

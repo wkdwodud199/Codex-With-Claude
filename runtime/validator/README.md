@@ -17,7 +17,18 @@ python3 runtime/validator/cli.py <design.md> --schema <alternate.json>
 종료 코드:
 - `0` — 검증 통과
 - `1` — 검증 실패 (오류 리스트 출력)
-- `2` — 파일 없음 / 디코딩 실패
+- `2` — 파일 없음 / 디코딩 실패 / **프로필(model-profiles.json) 부재·해석 실패** (task-004)
+
+## 실행 계획 (Execution Plan) 규칙 — task-004
+
+design.md 의 `실행 계획 (Execution Plan)` 섹션을 게이트한다 (설계 주도 라우팅):
+
+- 섹션 **부재**: legacy(`task-001`~`task-003`)만 허용. task id 는 경로(`kb/tasks/<id>/`) 또는
+  문서 제목의 `task-<NNN>` 에서 파생하며, 파생 실패 시 legacy 예외를 적용하지 않는다.
+- 섹션 **존재**: `implement_model` / `implement_effort` / `routing_reason` 필수,
+  model/effort 는 `runtime/config/model-profiles.json` 의 implement 화이트리스트 내여야 하고,
+  병렬화 표(`unit / 파일 범위 / depends_on / group`)에 데이터 행이 1개 이상 있어야 한다.
+- 화이트리스트는 섹션이 있을 때만 로드한다 — 프로필 IO/JSON 오류는 종료 코드 `2`.
 
 ## 구성
 

@@ -280,6 +280,37 @@ def test_check_done_json_adds_mode(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# 실행 계획 (Execution Plan) — CLI 통합 경로 (task-004)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_execution_plan_bad_model_exit_one():
+    result = _run([str(FIXTURES / "execution-plan-bad-model.md")])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "화이트리스트" in result.stdout
+
+
+def test_cli_execution_plan_legacy_absent_ok():
+    """title 이 task-001 인 legacy 설계는 실행 계획 없이 통과한다."""
+    result = _run([str(FIXTURES / "legacy-no-execution-plan.md")])
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_cli_execution_plan_absent_nonlegacy_exit_one():
+    result = _run([str(FIXTURES / "execution-plan-absent-nonlegacy.md")])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "실행 계획 누락" in result.stdout
+
+
+def test_cli_profile_missing_exit_two(tmp_path):
+    """실행 계획이 있는 설계 + 프로필 부재 → 환경 오류(2), 조용한 기본값 금지."""
+    # CWC_REPO_ROOT 를 빈 tmp 로 주입하면 runtime/config/model-profiles.json 이 없다.
+    result = _run([str(FIXTURES / "good.md")], repo_root=tmp_path)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "프로필" in (result.stderr + result.stdout)
+
+
+# ---------------------------------------------------------------------------
 # 회귀: 기존 design 검증 경로의 출력/종료코드가 바뀌지 않았는지 고정한다.
 # ci.yml golden step 과 PS1 runner step 이 이 계약에 의존한다.
 # ---------------------------------------------------------------------------

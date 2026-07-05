@@ -38,10 +38,40 @@ BeforeAll {
         Copy-Item (Join-Path $script:Repo "runtime\lib")       (Join-Path $work "runtime\") -Recurse
         Copy-Item (Join-Path $script:Repo "runtime\claude-implement.ps1") (Join-Path $work "runtime\")
         Copy-Item (Join-Path $script:Repo "runtime\codex-design.ps1")     (Join-Path $work "runtime\")
-        Copy-Item (Join-Path $script:Repo "templates\*") (Join-Path $work "templates\")
+        Copy-Item (Join-Path $script:Repo "runtime\render-prompt.py")     (Join-Path $work "runtime\")
+        New-Item -ItemType Directory -Path (Join-Path $work "runtime\config") -Force | Out-Null
+        Copy-Item (Join-Path $script:Repo "runtime\config\model-profiles.json") (Join-Path $work "runtime\config\")
+        # templates/prompts/ 하위 디렉터리 포함 복사 (task-004)
+        Copy-Item (Join-Path $script:Repo "templates\*") (Join-Path $work "templates\") -Recurse
         # git preflight(D3) 대비 — 작업 디렉터리를 git 저장소로 만든다.
         & git init -q $work 2>$null | Out-Null
         return $work
+    }
+
+    function Get-RestrictedPath {
+        if ($IsWindows -or ($env:OS -match "Windows")) { return "$env:SystemRoot\System32;$env:SystemRoot" }
+        return "/usr/bin:/bin"
+    }
+
+    # claude 스텁을 bin 디렉터리에 설치 (task-004: --version 응답 + 인자 로깅).
+    function Install-ClaudeStub {
+        param([string]$Work, [string]$Version = "2.99.0", [string]$ArgsLog = "")
+        $binDir = Join-Path $Work "bin"
+        New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+        $isWin = ($IsWindows -or ($env:OS -match "Windows"))
+        if ($isWin) {
+            $lines = @("@echo off", "if `"%~1`"==`"--version`" ( echo $Version & exit /b 0 )")
+            if ($ArgsLog) { $lines += "echo %* >> `"$ArgsLog`"" }
+            $lines += "exit /b 0"
+            Set-Content -Path (Join-Path $binDir "claude.cmd") -Value ($lines -join "`r`n") -Encoding ASCII
+        } else {
+            $lines = @('#!/usr/bin/env bash', ('if [ "${1:-}" = "--version" ]; then echo "' + $Version + '"; exit 0; fi'))
+            if ($ArgsLog) { $lines += ('printf ''%s\n'' "$*" >> "' + $ArgsLog + '"') }
+            $lines += 'exit 0'
+            Set-Content -Path (Join-Path $binDir "claude") -Value ($lines -join "`n") -Encoding ASCII
+            & chmod +x (Join-Path $binDir "claude") 2>$null | Out-Null
+        }
+        return $binDir
     }
 
     # 스크립트를 별도 셸 프로세스로 실행하고 exit code + 출력을 돌려준다.
@@ -163,5 +193,57 @@ Describe "claude-implement.ps1" -Skip:([string]::IsNullOrEmpty($script:Shell)) {
         $r = Invoke-Script -ScriptPath $script:ScriptPath -ScriptArgs @("task-z", "-Done")
         $r.ExitCode | Should -Be 1
         $r.Output | Should -Match "FAIL"
+    }
+
+    # task-004: 설계 주도 라우팅 — 실행 계획의 model/effort 가 --model/--effort 로 전달
+    It "-Auto routed by execution plan -> --model/--effort + provenance (task-004)" {
+        $argsLog = Join-Path $script:Work "claude-args.log"
+        $binDir = Install-ClaudeStub -Work $script:Work -ArgsLog $argsLog
+        $taskDir = Join-Path $script:Work "kb\tasks\task-r"
+        New-Item -ItemType Directory -Path $taskDir -Force | Out-Null
+        Copy-Item $script:GoodFixture (Join-Path $taskDir "design.md")
+        $tpl = Get-Content (Join-Path $script:Work "templates\manifest.md") -Raw
+        [System.IO.File]::WriteAllText((Join-Path $taskDir "manifest.md"),
+            ($tpl -replace 'task-<NNN>', 'task-r'), [System.Text.UTF8Encoding]::new($false))
+        $pathWithStub = "$binDir$([IO.Path]::PathSeparator)$(Get-RestrictedPath)"
+        $r = Invoke-Script -ScriptPath $script:ScriptPath -ScriptArgs @("task-r", "-Auto") `
+            -ExtraEnv @{ PATH = $pathWithStub }
+        $r.ExitCode | Should -Be 0
+        $stubArgs = Get-Content $argsLog -Raw
+        $stubArgs | Should -Match "--model claude-opus-4-8"
+        $stubArgs | Should -Match "--effort xhigh"
+        (Get-Content (Join-Path $taskDir "manifest.md") -Raw) | Should -Match "route=execution-plan"
+    }
+
+    # task-004: legacy(실행 계획 부재) -> 기본값 라우팅 + WARN + provenance(route=default)
+    It "legacy design without plan -> default route + WARN + provenance (task-004)" {
+        $argsLog = Join-Path $script:Work "claude-args.log"
+        $binDir = Install-ClaudeStub -Work $script:Work -ArgsLog $argsLog
+        $taskDir = Join-Path $script:Work "kb\tasks\task-001"
+        New-Item -ItemType Directory -Path $taskDir -Force | Out-Null
+        Copy-Item (Join-Path $script:Repo "tests\validator\fixtures\legacy-no-execution-plan.md") (Join-Path $taskDir "design.md")
+        $tpl = Get-Content (Join-Path $script:Work "templates\manifest.md") -Raw
+        [System.IO.File]::WriteAllText((Join-Path $taskDir "manifest.md"),
+            ($tpl -replace 'task-<NNN>', 'task-001'), [System.Text.UTF8Encoding]::new($false))
+        $pathWithStub = "$binDir$([IO.Path]::PathSeparator)$(Get-RestrictedPath)"
+        $r = Invoke-Script -ScriptPath $script:ScriptPath -ScriptArgs @("task-001", "-Auto") `
+            -ExtraEnv @{ PATH = $pathWithStub }
+        $r.ExitCode | Should -Be 0
+        $r.Output | Should -Match "기본값으로 라우팅"
+        $stubArgs = Get-Content $argsLog -Raw
+        $stubArgs | Should -Match "--model claude-opus-4-8"
+        $stubArgs | Should -Match "--effort high"
+        (Get-Content (Join-Path $taskDir "manifest.md") -Raw) | Should -Match "route=default"
+    }
+
+    # task-004: 프로필 부재 -> 검증 게이트가 환경 오류로 차단 (조용한 기본값 금지)
+    It "profile missing -> validator gate refuses (task-004)" {
+        $taskDir = Join-Path $script:Work "kb\tasks\task-r2"
+        New-Item -ItemType Directory -Path $taskDir -Force | Out-Null
+        Copy-Item $script:GoodFixture (Join-Path $taskDir "design.md")
+        Remove-Item (Join-Path $script:Work "runtime\config\model-profiles.json") -Force
+        $r = Invoke-Script -ScriptPath $script:ScriptPath -ScriptArgs @("task-r2", "-Auto")
+        $r.ExitCode | Should -Not -Be 0
+        $r.Output | Should -Match "프로필"
     }
 }

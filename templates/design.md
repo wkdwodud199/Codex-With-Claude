@@ -30,6 +30,16 @@
 2.
 3.
 
+## 실행 계획 (Execution Plan)
+
+- implement_model: (프로필 화이트리스트 내 모델 선택)
+- implement_effort: (프로필 화이트리스트 내 effort 선택)
+- routing_reason: (선택 근거 1줄)
+
+| unit | 파일 범위 | depends_on | group |
+|------|-----------|------------|-------|
+| | | | |
+
 ## 파일/모듈 영향 (Affected Files/Modules)
 
 | 파일/모듈 | 변경 유형 | 설명 |

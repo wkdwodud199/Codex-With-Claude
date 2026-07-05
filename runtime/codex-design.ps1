@@ -98,6 +98,16 @@ if ($code -ge 2) {
     Write-Host "환경 오류 (Python 미설치/IO 오류 등). 설계 검증을 수행할 수 없습니다." -ForegroundColor Red
     exit $code
 } elseif ($code -eq 0) {
+    # provenance (task-004): --auto 호출 성공 + 검증 통과 시에만 manifest 에 기록.
+    if ($invokeRc -eq 0 -and $script:CwcProvLine) {
+        if (Test-Path $ManifestFile) {
+            [System.IO.File]::AppendAllText($ManifestFile,
+                "- **generated_by**: $($script:CwcProvLine)`n", [System.Text.UTF8Encoding]::new($false))
+            Write-Host "[OK] provenance 기록: $ManifestFile"
+        } else {
+            Write-Host "[WARN] manifest 없음 — provenance 기록 건너뜀: $ManifestFile" -ForegroundColor Yellow
+        }
+    }
     Write-Host ""
     Write-Host "--- 다음 단계 ---"
     Write-Host "1. 설계 내용을 최종 검토하세요."

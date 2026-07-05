@@ -38,6 +38,31 @@ function Invoke-Validator {
     return [int]$LASTEXITCODE
 }
 
+function Invoke-RenderPrompt {
+    <#
+        render-prompt.py 를 실행해 stdout 값과 종료 코드를 돌려준다 (task-004).
+        출력 스트림 오염을 피하기 위해 실패 메시지는 Write-Host 로 흘리고
+        [pscustomobject]@{ Code; Value } 만 반환한다.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$RenderPrompt,
+        [Parameter(Mandatory=$true)][string[]]$Arguments
+    )
+    $py = Resolve-Python
+    if (-not $py) {
+        Write-Host "[ERROR] Python 3 을 찾을 수 없습니다 (프로필/프롬프트 해석에 필요)." -ForegroundColor Red
+        Write-Host "        Python 3.8+ 을 설치하세요: https://www.python.org/downloads/"
+        return [pscustomobject]@{ Code = 2; Value = "" }
+    }
+    $exe = $py[0]
+    $prefix = if ($py.Count -gt 1) { $py[1..($py.Count - 1)] } else { @() }
+    $out = (& $exe @prefix $RenderPrompt @Arguments 2>&1 | Out-String)
+    $rc = [int]$LASTEXITCODE
+    $value = $out.Trim()
+    if ($rc -ne 0 -and $value) { Write-Host $value }
+    return [pscustomobject]@{ Code = $rc; Value = $value }
+}
+
 function Test-ClaudeSession {
     # CLAUDECODE가 Claude Code가 항상 설정하는 신뢰 가능한 주(primary) 변수다.
     # CLAUDE_CODE_SESSION_ID는 세션 식별자로 실제 설정되는 변수다.

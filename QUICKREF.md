@@ -23,8 +23,9 @@ manifest 의 `concepts_needed` / `related_files` 에 적힌 것만 추가로 연
 ```
 python3 runtime/validator/cli.py kb/tasks/<id>/design.md
 ```
-통과 조건: 필수 7섹션 존재 · placeholder 없음 · 빈 테이블/체크박스 없음 · Inputs/Outputs/Next step 채워짐.
-종료코드 `0`=통과 / `1`=설계 보완 필요 / `2`=환경 오류(Python 미설치 등).
+통과 조건: 필수 7섹션 존재 · placeholder 없음 · 빈 테이블/체크박스 없음 · Inputs/Outputs/Next step 채워짐
+· **실행 계획**(implement_model/effort 가 화이트리스트 내 + 병렬화 표; legacy task-001~003 만 부재 허용).
+종료코드 `0`=통과 / `1`=설계 보완 필요 / `2`=환경 오류(Python 미설치·프로필 부재 등).
 
 ## 러너 명령
 ```
@@ -32,7 +33,11 @@ python3 runtime/validator/cli.py kb/tasks/<id>/design.md
 runtime/codex-design.sh <id> "<desc>"       runtime/claude-implement.sh <id>
 ```
 - 자동 호출: `--auto` (또는 `*_AUTO=1`). 세션 내부에서는 재귀 가드가 막으며 `*_AUTO_FORCE=1` 로만 우회한다.
-- `--auto` 실패(CLI 부재/비정상 종료)는 non-zero 로 전파된다(방어적).
+- `--auto` 실패(CLI 부재/비정상 종료/프로필 부재/버전 미달)는 non-zero 로 전파된다(방어적).
+- **모델/effort 강제 (task-004)**: design 은 정적 프로필(`gpt-5.5/xhigh` + 교차검증 `fable-5/max`,
+  design 한정 폴백 `opus-4-8`), implement 는 design.md **실행 계획이 라우팅** (부재 시 legacy 만
+  `opus-4-8/high` 기본값 + 경고). SSOT: `runtime/config/model-profiles.json` · `templates/prompts/`.
+  `--auto` 성공 시 manifest 에 `generated_by` provenance 가 기록된다.
 
 ## 컨텍스트 예산 (경고 전용)
 ```

@@ -17,7 +17,10 @@
     "(설계 시점에 해결되지 않은 질문이나 리스크)",
     "(이 설계가 의존하는 입력 나열)",
     "(이 설계가 생성할 산출물 나열)",
-    "(구현 완료 후 다음 단계 기술)"
+    "(구현 완료 후 다음 단계 기술)",
+    "(프로필 화이트리스트 내 모델 선택)",
+    "(프로필 화이트리스트 내 effort 선택)",
+    "(선택 근거 1줄)"
   ],
   "required_meta_fields": ["Status", "Inputs", "Outputs", "Next step"],
   "allowed_statuses_for_implementation": ["ready", "done"],
@@ -44,5 +47,12 @@
       "section": "파일/모듈 영향 (Affected Files/Modules)",
       "message": "파일/모듈 영향 섹션에 실제 내용 행이 없습니다. (헤더/구분선만 존재)"
     }
-  ]
+  ],
+  "execution_plan": {
+    "section": "실행 계획 (Execution Plan)",
+    "required_fields": ["implement_model", "implement_effort", "routing_reason"],
+    "parallel_table_columns": ["unit", "파일 범위", "depends_on", "group"],
+    "legacy_missing_allowed": ["task-001", "task-002", "task-003"],
+    "profile_path": "runtime/config/model-profiles.json"
+  }
 }

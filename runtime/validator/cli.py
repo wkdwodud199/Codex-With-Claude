@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -30,7 +31,9 @@ if str(_HERE.parent) not in sys.path:
 
 from validator.rules import (  # noqa: E402  (sys.path mutated above)
     ValidationError,
+    check_execution_plan,
     check_meta_fields,
+    extract_execution_plan,
     load_schema,
     parse_with_schema,
     run_all_rules,
@@ -57,6 +60,52 @@ def _repo_root() -> Path:
 # task-001 은 규약 이전 산출물이므로 명시 allowlist 로 완료 검증을 통과시킨다.
 # 이 allowlist 는 다른 task 로 확장하지 않는다.
 LEGACY_TASKS = {"task-001"}
+
+# 실행 계획 규칙용 task id 파생 (^task-\d+$ 만 인정 — 파생 실패 시 legacy 예외 미적용).
+_TASK_ID_RE = re.compile(r"^task-\d+$")
+
+
+def _derive_task_id(path: Path, doc) -> Optional[str]:
+    """design.md 경로(kb/tasks/<id>/design.md) 또는 문서 제목에서 task id 를 파생한다."""
+    try:
+        parts = Path(path).resolve().parts
+    except OSError:
+        parts = Path(path).parts
+    for part in reversed(parts):
+        if _TASK_ID_RE.match(part):
+            return part
+    if doc.sections:
+        m = re.search(r"task-\d+", doc.sections[0][1])
+        if m:
+            return m.group(0)
+    return None
+
+
+class _ProfileIOError(Exception):
+    """프로필(model-profiles.json) IO/JSON 오류 — 환경 오류(종료코드 2)."""
+
+
+def _load_implement_whitelist(schema) -> Optional[dict]:
+    """schema.execution_plan.profile_path 의 implement 화이트리스트를 로드한다.
+
+    프로필 부재/해석 실패는 _ProfileIOError — 조용한 기본값으로 대체하지 않는다.
+    """
+    ep_cfg = schema.get("execution_plan") or {}
+    rel = ep_cfg.get("profile_path")
+    if not rel:
+        return None
+    profile_path = _repo_root() / rel
+    try:
+        data = json.loads(profile_path.read_text(encoding="utf-8", errors="strict"))
+    except FileNotFoundError as e:
+        raise _ProfileIOError(f"프로필 파일을 찾을 수 없습니다: {profile_path}") from e
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise _ProfileIOError(f"프로필 해석 실패: {profile_path} ({e})") from e
+    impl = (data.get("phases") or {}).get("implement") or {}
+    return {
+        "allowed_models": impl.get("allowed_models") or [],
+        "allowed_efforts": impl.get("allowed_efforts") or [],
+    }
 
 
 def _format_human(file: Path, errors: List[ValidationError]) -> str:
@@ -354,6 +403,36 @@ def main(argv: List[str] | None = None) -> int:
     schema = load_schema(args.schema)
     doc = parse_with_schema(text, schema)
     errors = run_all_rules(doc, schema)
+
+    # 실행 계획(Execution Plan) 규칙 — task-004 설계 주도 라우팅 게이트.
+    # 화이트리스트(프로필)는 섹션이 실제로 있을 때만 로드한다. 프로필 IO/JSON
+    # 오류는 검증 실패(1)가 아니라 환경 오류(2)다 — 조용한 기본값 금지.
+    if schema.get("execution_plan"):
+        whitelist = None
+        if extract_execution_plan(doc, schema) is not None:
+            try:
+                whitelist = _load_implement_whitelist(schema)
+            except _ProfileIOError as e:
+                msg = f"[ERROR] {e}"
+                if args.json:
+                    print(
+                        json.dumps(
+                            {
+                                "ok": False,
+                                "file": str(args.file),
+                                "errors": [{"code": "profile_error", "message": msg, "line": 0}],
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                else:
+                    print(msg, file=sys.stderr)
+                return 2
+        errors.extend(
+            check_execution_plan(
+                doc, schema, task_id=_derive_task_id(args.file, doc), whitelist=whitelist
+            )
+        )
 
     output = _format_json(args.file, errors) if args.json else _format_human(args.file, errors)
     print(output)

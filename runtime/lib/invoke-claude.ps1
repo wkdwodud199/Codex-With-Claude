@@ -7,22 +7,25 @@
     Dot-source 전용. 내보내는 함수:
       Invoke-ClaudeIfEnabled -TaskId -DesignFile -ImplNotes -AutoMode -ProjectRoot
         - 반환 0  : 호출 성공 또는 의도된 스킵 (수동 모드 / 재귀 가드 스킵).
-        - 반환 1  : --auto 인데 CLI 부재 또는 호출 실패.
+        - 반환 1  : --auto 인데 CLI 부재 / 버전 미달 / 라우팅 실패 / 호출 실패.
+        - 반환 2  : 환경 오류 (python 부재, 프로필·프롬프트 IO/해석 오류).
+
+    task-004 (bash invoke-claude.sh 와 동작 패리티 — 설계 주도 라우팅):
+      - implement 의 model/effort 는 design.md 의 "실행 계획 (Execution Plan)" 이
+        지정한다 (render-prompt.py route-implement).
+      - 실행 계획 부재는 legacy(task-001~003)만 허용 — 프로필 기본값으로 라우팅하며
+        [WARN] 로그 + provenance(route=default) 를 남긴다.
+      - 항상 `claude -p --model <m> --effort <e>` 를 명시한다.
+      - 호출 성공 시 $script:CwcProvLine 에 provenance 를 남긴다 (러너가 기록).
 
     D2 정책:
       - 수동 모드 스킵 / 재귀 가드 스킵은 의도된 동작이므로 0 반환.
       - --auto 인데 claude CLI 부재 → NON-ZERO.
       - --auto 로 호출했으나 CLI가 non-zero 반환 → 그 코드를 그대로 전파.
 
-    재귀 가드 (중요):
-      이미 Claude Code 세션 안에서 `claude -p` 를 호출하면 중첩 세션이 돼
-      토큰이 폭증할 수 있으므로 기본 정책은 거부.
-      세션 감지는 CLAUDECODE(주) / CLAUDE_CODE_SESSION_ID 등으로 한다 (common.ps1 참조).
-      CLAUDE_AUTO_FORCE=1 이 명시된 경우에만 중첩 호출 허용.
-
-    프롬프트 구성 원칙:
-      - design.md 내용을 프롬프트에 인라인하지 않는다 (컨텍스트 절약).
-      - 경로만 전달하고 Claude 측에서 읽도록 한다.
+    재귀 가드: 세션 내 `claude -p` 는 중첩 세션이 되므로 기본 거부
+    (CLAUDE_AUTO_FORCE=1 로만 우회). 프롬프트는 design.md 를 인라인하지 않고
+    경로만 전달한다 (templates/prompts/implement.md 가 단일 원천).
 #>
 
 . "$PSScriptRoot\common.ps1"
@@ -35,6 +38,7 @@ function Invoke-ClaudeIfEnabled {
         [Parameter(Mandatory=$true)][bool]$AutoMode,
         [Parameter(Mandatory=$true)][string]$ProjectRoot
     )
+    $script:CwcProvLine = ""
 
     if (-not $AutoMode) {
         Write-Host "[INFO] 수동 모드입니다. Claude 자동 호출을 건너뜁니다."
@@ -58,24 +62,52 @@ function Invoke-ClaudeIfEnabled {
         return 1
     }
 
-    Write-Host "[INFO] Claude에게 구현 요청 중... ($($claudeCmd.Source))"
+    # --- 설계 주도 라우팅 (실행 계획 → model/effort) ---
+    $rp = Join-Path $ProjectRoot "runtime\render-prompt.py"
+    $model = Invoke-RenderPrompt -RenderPrompt $rp -Arguments @("route-implement", "--design-file", $DesignFile, "--task-id", $TaskId, "--field", "model")
+    if ($model.Code -ne 0) {
+        Write-Host "[ERROR] implement 라우팅 실패(model) — --auto 를 중단합니다." -ForegroundColor Red
+        return $model.Code
+    }
+    $effort = Invoke-RenderPrompt -RenderPrompt $rp -Arguments @("route-implement", "--design-file", $DesignFile, "--task-id", $TaskId, "--field", "effort")
+    if ($effort.Code -ne 0) {
+        Write-Host "[ERROR] implement 라우팅 실패(effort) — --auto 를 중단합니다." -ForegroundColor Red
+        return $effort.Code
+    }
+    $route = Invoke-RenderPrompt -RenderPrompt $rp -Arguments @("route-implement", "--design-file", $DesignFile, "--task-id", $TaskId, "--field", "route")
+    if ($route.Code -ne 0) {
+        Write-Host "[ERROR] implement 라우팅 실패(route) — --auto 를 중단합니다." -ForegroundColor Red
+        return $route.Code
+    }
+    if ($route.Value -eq "default") {
+        Write-Host "[WARN] 실행 계획 없음(legacy) — 프로필 기본값으로 라우팅합니다: $($model.Value)/$($effort.Value)" -ForegroundColor Yellow
+    }
+
+    # --- CLI 버전 preflight ---
+    $verOut = (& $claudeCmd.Source --version 2>&1 | Out-String).Trim()
+    $ver = Invoke-RenderPrompt -RenderPrompt $rp -Arguments @("check-cli-version", "--phase", "implement", "--cli", "claude", "--version-output", $verOut)
+    if ($ver.Code -ne 0) {
+        Write-Host "[ERROR] claude CLI 버전 preflight 실패 — 호출하지 않습니다. (감지: $verOut)" -ForegroundColor Red
+        return $ver.Code
+    }
+
+    # --- 프롬프트 렌더 (SSOT: templates/prompts/implement.md) ---
+    $prompt = Invoke-RenderPrompt -RenderPrompt $rp -Arguments @("render", "--phase", "implement", "--task-id", $TaskId, "--design-file", $DesignFile, "--impl-notes", $ImplNotes, "--project-root", $ProjectRoot, "--model", $model.Value, "--effort", $effort.Value)
+    if ($prompt.Code -ne 0) {
+        Write-Host "[ERROR] 프롬프트 렌더 실패 — --auto 를 중단합니다." -ForegroundColor Red
+        return $prompt.Code
+    }
+
+    Write-Host "[INFO] Claude에게 구현 요청 중... (model=$($model.Value), effort=$($effort.Value), route=$($route.Value))"
     Write-Host ""
-    $prompt = @"
-$TaskId 의 설계 문서를 읽고 구현을 시작해주세요.
-
-설계 문서: $DesignFile
-구현 노트: $ImplNotes
-프로젝트 루트: $ProjectRoot
-
-CLAUDE.md 규약:
-  1. design.md를 먼저 읽으세요 (필수 섹션 / Status 확인).
-  2. 구현 중 결정이 설계와 달라지면 implementation-notes.md에 기록하세요.
-  3. 완료 후 kb/artifacts/$TaskId-summary.md 를 작성하고 python3 runtime/generate-status.py 를 실행하세요.
-"@
-    # CLI stdout을 함수 출력 스트림에 흘리면 return 값이 배열로 오염된다.
-    # Write-Host로 콘솔에 명시 출력하고, 함수는 스칼라 rc만 반환한다.
-    & $claudeCmd.Source -p $prompt 2>&1 | ForEach-Object { Write-Host $_ }
+    # CLI stdout 오염 방지 — Write-Host 로 출력, 함수는 스칼라 rc만 반환.
+    & $claudeCmd.Source -p $prompt.Value --model $model.Value --effort $effort.Value 2>&1 |
+        ForEach-Object { Write-Host $_ }
     $rc = [int]$LASTEXITCODE
     Write-Host ""
+    if ($rc -eq 0) {
+        $today = Get-Date -Format 'yyyy-MM-dd'
+        $script:CwcProvLine = "implement=claude $($model.Value)/$($effort.Value) @claude $($ver.Value), $today (route=$($route.Value))"
+    }
     return $rc
 }
