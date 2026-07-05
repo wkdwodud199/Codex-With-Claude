@@ -39,6 +39,12 @@ if str(_HERE) not in sys.path:
 from validator.parser import parse_document  # noqa: E402
 from validator.rules import extract_execution_plan, load_schema  # noqa: E402
 
+# Windows 파이프 stdout 은 locale 인코딩(cp1252 등)이라 한국어 프롬프트/오류 출력이
+# crash 한다 — validator cli.py 와 동일하게 UTF-8 로 강제한다.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 _TASK_ID_RE = re.compile(r"^task-\d+$")
 _VERSION_RE = re.compile(r"\d+(?:\.\d+)+")
 _LEFTOVER_TOKEN_RE = re.compile(r"\{\{[A-Z_]+\}\}")

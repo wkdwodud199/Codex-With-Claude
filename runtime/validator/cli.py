@@ -40,6 +40,13 @@ from validator.rules import (  # noqa: E402  (sys.path mutated above)
 )
 from validator.parser import parse_document  # noqa: E402
 
+# Windows 에서 파이프된 stdout 은 locale 인코딩(cp1252 등)이 기본이라 한국어 출력이
+# UnicodeEncodeError 로 crash 한다 (stderr 는 backslashreplace 라 살아남음 — CI 첫 실행에서 발견).
+# 러너/CI/파이프 어디서든 UTF-8 로 강제한다 (PS 러너도 콘솔을 UTF-8 로 맞춘다).
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # repo root = .../runtime/validator/cli.py -> parents[2]
 _DEFAULT_REPO_ROOT = _HERE.parent.parent
 
