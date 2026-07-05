@@ -4,7 +4,7 @@
 > 예외·상세 규칙이 필요할 때만 [AGENT.md](./AGENT.md)(공통 규약·상태 전이 **정본**) / [CLAUDE.md](./CLAUDE.md)(구현자 규칙)으로 에스컬레이션한다.
 
 ## 역할
-- **Codex** = 설계자 → `kb/tasks/<id>/design.md` 작성
+- **Codex** = 설계자 → `kb/tasks/<id>/design.md` 작성 · (Phase D) 구현 **리뷰어** → `reviews/<NNN>.md`
 - **Claude** = 구현자 → design.md 검증 후 구현, 결과를 `kb/tasks/<id>/implementation-notes.md` 에 기록
 
 ## 기본 로드 세트 (per task)
@@ -41,6 +41,10 @@ runtime/codex-design.sh <id> "<desc>"       runtime/claude-implement.sh <id>
 - **설계 교차검토 (task-005, 선택)**: `runtime/review-design.sh <id>` — design.md 검증 통과 후 Claude
   `fable-5/max` 로 **읽기전용** 2차 검토를 받아 `kb/tasks/<id>/design-review.md` 를 남긴다(**advisory** —
   구현 게이트 아님). design.md 는 해시로 불변 보증, fallback 은 provenance 에 기록.
+- **구현 리뷰 (task-006 Phase D, 선택)**: `runtime/codex-review.sh <id>` — 구현 완료 후 Codex `gpt-5.5/xhigh`
+  가 리뷰해 `kb/tasks/<id>/reviews/<NNN>.md` 를 누적한다. status enum(`pending|request-changes|approved|rejected`)
+  정본은 collab.md. **approved-done**: reviews/ 가 있으면 `--check-done` 은 최신 리뷰가 `approved` 여야 통과
+  (없으면 기존 동작). **no-auto-revert**: 리뷰가 task status 를 자동으로 되돌리지 않는다.
 
 ## 컨텍스트 예산 (경고 전용)
 ```

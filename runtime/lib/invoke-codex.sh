@@ -119,3 +119,36 @@ invoke_codex_if_enabled() {
     fi
     return "$rc"
 }
+
+# invoke_codex_review — Phase D 구현 리뷰용 codex 호출 (task-006).
+#   invoke_codex_review <project-root> <prompt> <model> <effort>
+#   - 재귀 가드 / codex 존재 / git preflight 를 design 호출과 같은 의미로 적용.
+#   - codex exec --sandbox workspace-write -m <model> -c model_reasoning_effort=<effort>.
+#     --skip-git-repo-check 는 쓰지 않는다.
+#   - return 0: 호출 성공. 1: 가드/부재/preflight 실패. codex non-zero 는 그대로 전파.
+#   재귀 가드가 막으면 리뷰 생성 자체가 목적이므로 false success 를 내지 않고 NON-ZERO(1) 로 종료한다.
+invoke_codex_review() {
+    local project_root="$1" prompt="$2" model="$3" effort="$4"
+
+    if is_claude_session && ! truthy "${CODEX_AUTO_FORCE:-}"; then
+        echo "[WARN] 세션 내부에서 codex 자동 호출을 거부합니다 (재귀 방지). CODEX_AUTO_FORCE=1 로 우회."
+        echo "       리뷰를 생성하지 못했으므로 실패로 종료합니다."
+        return 1
+    fi
+    if ! command -v codex >/dev/null 2>&1; then
+        echo "[WARN] codex CLI를 찾을 수 없습니다. 리뷰를 생성할 수 없습니다."
+        return 1
+    fi
+    if ! git -C "$project_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "[WARN] git 저장소가 아닙니다: $project_root (codex 리뷰는 git 저장소 안에서만)."
+        return 1
+    fi
+
+    echo "[INFO] Codex 리뷰 요청 중... (model=$model, effort=$effort)"
+    echo ""
+    echo "" | codex exec --sandbox workspace-write -C "$project_root" \
+        -m "$model" -c "model_reasoning_effort=$effort" "$prompt" < /dev/null
+    local rc=$?
+    echo ""
+    return "$rc"
+}

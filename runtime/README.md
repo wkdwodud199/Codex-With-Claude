@@ -15,6 +15,7 @@
 | `lib/invoke-claude.{sh,ps1}` | `claude` CLI 자동 호출 로직 (재귀 가드 포함) |
 | `lib/invoke-codex.{sh,ps1}` | `codex` CLI 자동 호출 로직 (재귀 가드 + 샌드박스) |
 | `codex-design.{sh,ps1}` 뒤 `review-design.{sh,ps1}` | (선택) 설계 교차검토 — Claude fable-5/max 읽기전용 2차 검토 (task-005, advisory) |
+| `codex-review.{sh,ps1}` | (선택) 구현 리뷰 — Codex gpt-5.5/xhigh 가 구현 결과를 리뷰 (task-006, Phase D) |
 | `render-prompt.py` | 프로필 조회 · implement 라우팅 · CLI 버전 preflight · 프롬프트 렌더 · fallback 판정 (task-004/005) |
 | `config/model-profiles.json` | phase별 모델/effort **강제 프로필 SSOT** — design 정적 강제, implement 는 design-directed |
 | `context-budget.py` | 기본 로드 세트 vs baseline 바이트/토큰 비교 — 경고 전용 (warning-only) |
@@ -124,7 +125,26 @@ codex 레인은 **검증 통과 후에만** 기록한다. manifest 가 없으면
   `- **cross_reviewed_by**: claude <actual-model>/max @claude <cli-ver>, <date> (fallback=<true|false>)`.
 - 경계: `collab.md` / done-gate / `reviews/` 는 건드리지 않는다 (그건 Phase D = task-006 소관).
 
+## 구현 리뷰 루프 (`codex-review.{sh,ps1}` — task-006, Phase D)
+
+- 호출 형태: `runtime/codex-review.sh <task-id>` — 구현 완료(**base done**) 후 **선택적으로** 실행.
+- base 전제: `validator/cli.py --check-review-target <id>` 로 impl-notes(done)+summary(done)+manifest 를
+  확인한다(approved-done 리뷰 게이트는 **제외** — 이전 리뷰가 request-changes 여도 재리뷰 가능하게).
+- codex 호출: `codex exec --sandbox workspace-write -C <root> -m gpt-5.5 -c model_reasoning_effort=xhigh`
+  (review.codex 프로필; `--skip-git-repo-check` 금지, git preflight/버전 preflight 계승).
+- 산출물: `kb/tasks/<id>/reviews/<NNN>.md` (3자리, 최댓값+1 누적). codex 는 먼저 staging 파일에 쓰고,
+  `--check-review` 검증을 통과해야만 `reviews/` 로 승격 → 부분/오류 리뷰가 게이트를 오염시키지 않는다.
+- **review status enum** 의 정본은 [collab.md](../collab.md) (`pending|request-changes|approved|rejected`).
+- **게이트** (validator CLI):
+  - `--check-review <NNN.md>`: 단일 리뷰 형식/enum 검증.
+  - `--latest-review <id>`: 최신 리뷰/상태 조회.
+  - `--check-review-target <id>`: 리뷰 게이트 제외 base 검증(재리뷰 순환 방지).
+  - `--check-done <id>`: **approved-done** — `reviews/` 가 있으면 최신 리뷰가 `approved` 여야 통과.
+    `reviews/` 가 없으면 기존 동작 유지(하위호환). exit `1`=미승인/형식오류, `2`=collab enum·IO 오류.
+- **no-auto-revert**: 어떤 리뷰 결과도 implementation-notes/summary 의 `Status` 를 자동으로 되돌리지 않는다.
+
 ## 참고
 
 - 상태 모델(설계 준비도 vs 구현 진행도): [AGENT.md](../AGENT.md) "문서 상태 전이" 절.
+- 리뷰 루프 인터페이스/enum/게이트 정본: [collab.md](../collab.md).
 - 로드맵 / 실패 모드: [imp.md](../imp.md) (Failure Mode #11 — codex 자율 쓰기 표면).

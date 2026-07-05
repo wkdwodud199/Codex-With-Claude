@@ -117,3 +117,45 @@ function Invoke-CodexIfEnabled {
     }
     return $rc
 }
+
+# Invoke-CodexReview — Phase D 구현 리뷰용 codex 호출 (task-006). Bash invoke_codex_review 패리티.
+#   반환 0: 호출 성공. 1: 가드/부재/preflight 실패. codex non-zero 는 그대로 전파.
+#   재귀 가드가 막으면 리뷰 생성이 목적이므로 false success 를 내지 않고 NON-ZERO(1) 로 종료.
+function Invoke-CodexReview {
+    param(
+        [Parameter(Mandatory=$true)][string]$ProjectRoot,
+        [Parameter(Mandatory=$true)][string]$Prompt,
+        [Parameter(Mandatory=$true)][string]$Model,
+        [Parameter(Mandatory=$true)][string]$Effort
+    )
+    if ((Test-ClaudeSession) -and (-not (Test-Truthy $env:CODEX_AUTO_FORCE))) {
+        Write-Host "[WARN] 세션 내부에서 codex 자동 호출을 거부합니다 (재귀 방지). CODEX_AUTO_FORCE=1 로 우회." -ForegroundColor Yellow
+        Write-Host "       리뷰를 생성하지 못했으므로 실패로 종료합니다."
+        return 1
+    }
+    $codexCmd = Get-Command codex.cmd -ErrorAction SilentlyContinue
+    if (-not $codexCmd) { $codexCmd = Get-Command codex -CommandType Application -ErrorAction SilentlyContinue }
+    if (-not $codexCmd) {
+        Write-Host "[WARN] codex CLI를 찾을 수 없습니다. 리뷰를 생성할 수 없습니다." -ForegroundColor Yellow
+        return 1
+    }
+    $gitCmd = Get-Command git -CommandType Application -ErrorAction SilentlyContinue
+    $insideRepo = $false
+    if ($gitCmd) {
+        & $gitCmd.Source -C $ProjectRoot rev-parse --is-inside-work-tree 2>$null | Out-Null
+        $insideRepo = ($LASTEXITCODE -eq 0)
+    }
+    if (-not $insideRepo) {
+        Write-Host "[WARN] git 저장소가 아닙니다: $ProjectRoot (codex 리뷰는 git 저장소 안에서만)." -ForegroundColor Yellow
+        return 1
+    }
+
+    Write-Host "[INFO] Codex 리뷰 요청 중... (model=$Model, effort=$Effort)"
+    Write-Host ""
+    $null | & $codexCmd.Source exec --sandbox workspace-write -C $ProjectRoot `
+        -m $Model -c "model_reasoning_effort=$Effort" $Prompt 2>&1 |
+        ForEach-Object { Write-Host $_ }
+    $rc = [int]$LASTEXITCODE
+    Write-Host ""
+    return $rc
+}

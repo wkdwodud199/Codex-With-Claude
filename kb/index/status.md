@@ -8,7 +8,7 @@
 
 | Task ID | 제목 | Status | 비고 |
 |---------|------|--------|------|
-| task-006 | 설계 문서 — task-006 | ready | — |
+| (없음) | — | — | — |
 
 ## 완료 작업
 
@@ -19,6 +19,7 @@
 | task-003 | 거버넌스 enforcement — status board 생성기 + done-gate | 2026-06-09 | [summary](../artifacts/task-003-summary.md) |
 | task-004 | 러너 --auto 모델/effort 강제 — 2층 라우팅 + 프롬프트 SSOT + 실행 계획(병렬화) | 2026-07-05 | [summary](../artifacts/task-004-summary.md) |
 | task-005 | 설계 교차검증 러너 (P1) — Codex 설계 후 Claude fable-5/max 읽기전용 2차 검토 | 2026-07-05 | [summary](../artifacts/task-005-summary.md) |
+| task-006 | 구현 리뷰 루프 (imp.md Phase D) — codex-review 러너 + review status enum + approved-done 게이트 | 2026-07-05 | [summary](../artifacts/task-006-summary.md) |
 <!-- END:generated -->
 
 ## 메타 개선 로드맵

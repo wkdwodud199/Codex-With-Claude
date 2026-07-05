@@ -110,11 +110,14 @@ in-progress ──→ done
 - 설계와 다른 결정을 내려야 할 경우 `implementation-notes.md`에 사유를 기록한다.
 - 설계 문서 자체를 수정하지 않는다 (설계 문서는 Codex 소유).
 
-### 리뷰 루프 (v2 예약 — imp.md Phase D)
+### 리뷰 루프 (v2 active — imp.md Phase D, task-006)
 
-- `collab.md`를 통한 Codex 리뷰 → Claude 재구현 루프는 v2(imp.md Phase D)에서 활성화한다.
-- v1에서는 이 파일에 기록하지 않으며, 인터페이스만 예약한다.
-- review status enum 과 no-auto-revert / approved-done 게이트의 단일 예약 정의는 [collab.md](./collab.md) 다.
+- Codex 가 Claude 구현 결과를 리뷰하는 루프가 **활성화**되었다. 러너: `runtime/codex-review.{sh,ps1} <id>` (opt-in).
+- 리뷰 데이터는 per-task `kb/tasks/<id>/reviews/<NNN>.md` 에 **누적**한다(collab.md 에 직접 쌓지 않는다).
+- review status enum(`pending|request-changes|approved|rejected`)·no-auto-revert·approved-done 게이트의
+  단일 정본은 [collab.md](./collab.md) 다. 검증기(`review_rules.py`)가 collab.md 의 enum 마커를 읽어 게이트한다.
+- **approved-done**: `reviews/` 가 있으면 `--check-done` 은 최신 리뷰가 `approved` 일 때만 통과한다
+  (없으면 기존 done-gate 동작 유지 — 리뷰 없는 기존 task 하위호환).
 
 ## 저장 백엔드
 

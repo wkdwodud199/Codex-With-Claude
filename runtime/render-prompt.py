@@ -215,12 +215,23 @@ def cmd_render(args: argparse.Namespace) -> int:
     impl = (profiles.get("phases") or {}).get("implement") or {}
     ep_cfg = schema.get("execution_plan") or {}
 
+    review_enum = ""
+    if args.phase == "review":
+        from validator.review_rules import load_review_enum, ReviewConfigError  # noqa: E402
+        try:
+            review_enum = " | ".join(load_review_enum(root, schema))
+        except ReviewConfigError as e:
+            raise _fail(2, str(e))
+
     required_sections = "\n".join(f"  - {s}" for s in schema.get("required_sections", []))
     subs = {
         "TASK_ID": args.task_id,
         "TASK_DESC": args.task_desc or "",
         "DESIGN_FILE": args.design_file,
         "IMPL_NOTES": args.impl_notes or "",
+        "ARTIFACT_SUMMARY": getattr(args, "artifact_summary", None) or "",
+        "REVIEW_TEMPLATE": getattr(args, "review_template", None) or "",
+        "REVIEW_STATUS_ENUM": review_enum,
         "PROJECT_ROOT": args.project_root or str(root),
         "REVIEW_FILE": getattr(args, "review_file", None) or "",
         "REQUIRED_SECTIONS": required_sections,
@@ -336,12 +347,14 @@ def build_parser() -> argparse.ArgumentParser:
     v.set_defaults(func=cmd_check_cli_version)
 
     d = sub.add_parser("render", help="프롬프트 템플릿 렌더")
-    d.add_argument("--phase", required=True, choices=["design", "implement", "design-review"])
+    d.add_argument("--phase", required=True, choices=["design", "implement", "design-review", "review"])
     d.add_argument("--task-id", required=True)
     d.add_argument("--design-file", required=True)
     d.add_argument("--task-desc", default=None)
     d.add_argument("--impl-notes", default=None)
     d.add_argument("--review-file", default=None)
+    d.add_argument("--artifact-summary", default=None)
+    d.add_argument("--review-template", default=None)
     d.add_argument("--project-root", default=None)
     d.add_argument("--model", default=None)
     d.add_argument("--effort", default=None)

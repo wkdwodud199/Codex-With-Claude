@@ -39,6 +39,13 @@ from validator.rules import (  # noqa: E402  (sys.path mutated above)
     run_all_rules,
 )
 from validator.parser import parse_document  # noqa: E402
+from validator.review_rules import (  # noqa: E402
+    ReviewConfigError,
+    check_review,
+    latest_review,
+    load_review_enum,
+    review_status,
+)
 
 # Windows 에서 파이프된 stdout 은 locale 인코딩(cp1252 등)이 기본이라 한국어 출력이
 # UnicodeEncodeError 로 crash 한다 (stderr 는 backslashreplace 라 살아남음 — CI 첫 실행에서 발견).
@@ -153,6 +160,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="완료 산출물 계약 검증 (task-id 또는 kb/tasks/<id> 경로)",
     )
+    parser.add_argument(
+        "--check-review",
+        dest="check_review",
+        metavar="REVIEW_MD",
+        default=None,
+        help="단일 리뷰 문서 검증 (reviews/NNN.md 경로)",
+    )
+    parser.add_argument(
+        "--latest-review",
+        dest="latest_review",
+        metavar="TASK",
+        default=None,
+        help="task 의 최신 리뷰 파일/상태 조회 (task-id 또는 경로)",
+    )
+    parser.add_argument(
+        "--check-review-target",
+        dest="check_review_target",
+        metavar="TASK",
+        default=None,
+        help="리뷰 게이트를 제외한 base 완료 검증 (재리뷰 순환 방지용)",
+    )
     return parser
 
 
@@ -201,11 +229,55 @@ def _template_with_id(repo_root: Path, task_id: str) -> str:
     return text.replace("task-<NNN>", task_id)
 
 
-def check_done(task_arg: str, repo_root: Optional[Path] = None) -> List[ValidationError]:
+def _review_gate_errors(task_dir: Path, repo_root: Path, schema: dict) -> List[ValidationError]:
+    """approved-done 게이트 (task-006). reviews/ 가 존재할 때만 적용한다.
+
+    - reviews/ 없음 → 빈 리스트 (기존 done-gate 동작 유지, 하위호환).
+    - reviews/ 있는데 NNN.md 없음 → review_missing (exit 1).
+    - 최신 리뷰가 형식 위반 → 그 오류 (exit 1).
+    - 최신 리뷰 status != approved → review_not_approved (exit 1).
+    - 리뷰 파일 IO / enum 마커 로드 실패 → _DoneIOError (exit 2).
+    """
+    cfg = schema.get("review") or {}
+    reviews_dir = task_dir / cfg.get("review_dir", "reviews")
+    if not reviews_dir.is_dir():
+        return []
+    latest = latest_review(reviews_dir, schema)
+    if latest is None:
+        return [
+            ValidationError(
+                code="review_missing",
+                message=f"[리뷰 없음] {reviews_dir} 가 있으나 NNN.md 리뷰가 없습니다 (approved-done 게이트).",
+            )
+        ]
+    text = _read_utf8(latest)  # IO/decode 실패 → _DoneIOError(2)
+    try:
+        enum = load_review_enum(repo_root, schema)
+    except ReviewConfigError as e:
+        raise _DoneIOError(str(e)) from e
+    review_errors = check_review(text, schema, enum)
+    if review_errors:
+        return review_errors
+    status = review_status(text, schema)
+    approved = cfg.get("approved_status", "approved")
+    if status != approved:
+        return [
+            ValidationError(
+                code="review_not_approved",
+                message=f"[리뷰 미승인] 최신 리뷰({latest.name}) status='{status}' — '{approved}' 이어야 완료입니다.",
+            )
+        ]
+    return []
+
+
+def check_done(
+    task_arg: str, repo_root: Optional[Path] = None, include_review: bool = True
+) -> List[ValidationError]:
     """완료 산출물 계약을 검증하고 위반 목록을 반환한다.
 
     빈 리스트면 통과. 위반은 ValidationError 로 수집한다.
     IO/디코딩/환경 오류는 _DoneIOError 로 던져 호출자가 종료코드 2 로 처리한다.
+    include_review=False 면 approved-done 리뷰 게이트를 건너뛴다(재리뷰 순환 방지용 base 검증).
     """
     repo_root = repo_root or _repo_root()
     _task_id, task_dir = _resolve_task(task_arg, repo_root)
@@ -336,10 +408,14 @@ def check_done(task_arg: str, repo_root: Optional[Path] = None) -> List[Validati
                     )
                 )
 
+    # 4) approved-done 리뷰 게이트 (task-006) — reviews/ 존재 시에만, base 검증(target)에서는 제외.
+    if include_review:
+        errors.extend(_review_gate_errors(task_dir, repo_root, schema))
+
     return errors
 
 
-def _run_check_done(task_arg: str, as_json: bool) -> int:
+def _run_check_done(task_arg: str, as_json: bool, include_review: bool = True) -> int:
     # legacy allowlist: 파일 상태와 무관하게 통과 — IO 검사보다 먼저 판정한다.
     # (templates/ 없는 sparse checkout 환경에서도 legacy task 는 항상 통과해야 한다.)
     try:
@@ -376,7 +452,7 @@ def _run_check_done(task_arg: str, as_json: bool) -> int:
         return 0
 
     try:
-        errors = check_done(task_arg)
+        errors = check_done(task_arg, include_review=include_review)
     except _DoneIOError as e:
         msg = f"[ERROR] {e}"
         if as_json:
@@ -420,12 +496,110 @@ def _run_check_done(task_arg: str, as_json: bool) -> int:
     return 0 if not errors else 1
 
 
+def _run_check_review(review_arg: str, as_json: bool) -> int:
+    """단일 리뷰 문서(reviews/NNN.md)를 검증한다."""
+    path = Path(review_arg)
+    if not path.is_absolute():
+        path = _repo_root() / path
+    schema = load_schema()
+    try:
+        text = _read_utf8(path)
+        enum = load_review_enum(_repo_root(), schema)
+    except _DoneIOError as e:
+        _emit_mode_error("check-review", review_arg, str(e), as_json)
+        return 2
+    except ReviewConfigError as e:
+        _emit_mode_error("check-review", review_arg, f"[ERROR] {e}", as_json)
+        return 2
+    errors = check_review(text, schema, enum)
+    if as_json:
+        print(json.dumps(
+            {"ok": not errors, "mode": "check-review", "file": str(path),
+             "errors": [e.to_dict() for e in errors]}, ensure_ascii=False))
+    else:
+        if not errors:
+            print(f"[OK] 리뷰 검증 통과: {path.name}")
+        else:
+            print(f"\n[FAIL] 리뷰 검증 실패 ({len(errors)}건): {path}")
+            for e in errors:
+                print(f"  - {e.message}")
+    return 0 if not errors else 1
+
+
+def _run_latest_review(task_arg: str, as_json: bool) -> int:
+    """task 의 최신 리뷰 파일과 status 를 조회·검증한다."""
+    schema = load_schema()
+    try:
+        _tid, task_dir = _resolve_task(task_arg, _repo_root())
+    except _DoneIOError as e:
+        _emit_mode_error("latest-review", task_arg, str(e), as_json)
+        return 2
+    reviews_dir = task_dir / (schema.get("review") or {}).get("review_dir", "reviews")
+    latest = latest_review(reviews_dir, schema)
+    if latest is None:
+        msg = f"[FAIL] 최신 리뷰가 없습니다: {reviews_dir}"
+        if as_json:
+            print(json.dumps({"ok": False, "mode": "latest-review", "task": task_dir.name,
+                              "errors": [{"code": "review_missing", "message": msg, "line": 0}]},
+                             ensure_ascii=False))
+        else:
+            print(msg)
+        return 1
+    try:
+        text = _read_utf8(latest)
+        enum = load_review_enum(_repo_root(), schema)
+    except _DoneIOError as e:
+        _emit_mode_error("latest-review", task_arg, str(e), as_json)
+        return 2
+    except ReviewConfigError as e:
+        _emit_mode_error("latest-review", task_arg, f"[ERROR] {e}", as_json)
+        return 2
+    errors = check_review(text, schema, enum)
+    status = review_status(text, schema)
+    if as_json:
+        print(json.dumps(
+            {"ok": not errors, "mode": "latest-review", "task": task_dir.name,
+             "latest": latest.name, "status": status,
+             "errors": [e.to_dict() for e in errors]}, ensure_ascii=False))
+    else:
+        if not errors:
+            print(f"[OK] 최신 리뷰: {latest.name} (status={status})")
+        else:
+            print(f"\n[FAIL] 최신 리뷰({latest.name}) 형식 오류 ({len(errors)}건)")
+            for e in errors:
+                print(f"  - {e.message}")
+    return 0 if not errors else 1
+
+
+def _emit_mode_error(mode: str, target: str, msg: str, as_json: bool) -> None:
+    if not msg.startswith("[ERROR]"):
+        msg = f"[ERROR] {msg}"
+    if as_json:
+        print(json.dumps(
+            {"ok": False, "mode": mode, "task": target,
+             "errors": [{"code": "io_error", "message": msg, "line": 0}]}, ensure_ascii=False))
+    else:
+        print(msg, file=sys.stderr)
+
+
 def main(argv: List[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    # --check-done 모드: 완료 산출물 계약 검증.
+    # --check-done 모드: 완료 산출물 계약 검증 (approved-done 리뷰 게이트 포함).
     if args.check_done is not None:
         return _run_check_done(args.check_done, args.json)
+
+    # --check-review-target: 리뷰 게이트를 제외한 base 완료 검증 (재리뷰 순환 방지).
+    if args.check_review_target is not None:
+        return _run_check_done(args.check_review_target, args.json, include_review=False)
+
+    # --check-review: 단일 리뷰 문서 검증.
+    if args.check_review is not None:
+        return _run_check_review(args.check_review, args.json)
+
+    # --latest-review: 최신 리뷰 조회.
+    if args.latest_review is not None:
+        return _run_latest_review(args.latest_review, args.json)
 
     # 기존 design.md 검증 경로 (100% 보존).
     if args.file is None:

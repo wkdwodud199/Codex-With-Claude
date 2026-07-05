@@ -32,7 +32,7 @@
         "model": "gpt-5.5",
         "reasoning_effort": "xhigh",
         "min_cli_version": "0.142.4",
-        "reserved": "Phase D (v2 review loop) 예약 — 현재 소비자 없음"
+        "consumer": "runtime/codex-review.{sh,ps1} (task-006, Phase D active)"
       }
     }
   }
