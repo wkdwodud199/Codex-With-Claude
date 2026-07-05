@@ -59,6 +59,16 @@ flowchart TD
    - **`--auto`**: `codex exec --sandbox workspace-write`(+ git preflight)로 Codex가 설계를 채운다. CLI 부재/실패는 **non-zero 전파**.
 4. 완성된 `design.md` 의 `Status` 는 `ready`. **design.md 는 Codex 소유**이며 Claude 는 수정하지 않는다.
 
+## ①.5 (선택) 설계 교차검토 — `review-design.{sh,ps1}` (task-005, P1)
+
+Codex 설계가 validator 를 통과한 뒤, 구현을 시작하기 **전에** 선택적으로 실행할 수 있는 advisory 단계다.
+
+1. `runtime/review-design.sh <id>` — validator 재통과를 precondition 으로 확인한 뒤 Claude
+   `design.claude_cross_check`(fable-5/max + fallback opus-4-8, `--output-format json`)로 **읽기전용** 2차 검토.
+2. 결과는 `kb/tasks/<id>/design-review.md`(advisory)에 기록, manifest 에 `cross_reviewed_by` provenance.
+3. **게이트가 아니다**: 우려가 있어도 종료코드 0. `claude-implement` 의 validator 게이트/ done-gate 의미는 바꾸지 않는다.
+4. design.md 는 읽기전용(전후 SHA-256 해시 비교), fallback 발동은 조용히 넘기지 않고 provenance 에 명시.
+
 ## ② Claude 레인 (구현자)
 
 `runtime/claude-implement.{sh,ps1} <id>`

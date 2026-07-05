@@ -38,6 +38,9 @@ runtime/codex-design.sh <id> "<desc>"       runtime/claude-implement.sh <id>
   design 한정 폴백 `opus-4-8`), implement 는 design.md **실행 계획이 라우팅** (부재 시 legacy 만
   `opus-4-8/high` 기본값 + 경고). SSOT: `runtime/config/model-profiles.json` · `templates/prompts/`.
   `--auto` 성공 시 manifest 에 `generated_by` provenance 가 기록된다.
+- **설계 교차검토 (task-005, 선택)**: `runtime/review-design.sh <id>` — design.md 검증 통과 후 Claude
+  `fable-5/max` 로 **읽기전용** 2차 검토를 받아 `kb/tasks/<id>/design-review.md` 를 남긴다(**advisory** —
+  구현 게이트 아님). design.md 는 해시로 불변 보증, fallback 은 provenance 에 기록.
 
 ## 컨텍스트 예산 (경고 전용)
 ```

@@ -14,7 +14,8 @@
 | `lib/common.{sh,ps1}` | python probe, 세션 감지, truthy 헬퍼 |
 | `lib/invoke-claude.{sh,ps1}` | `claude` CLI 자동 호출 로직 (재귀 가드 포함) |
 | `lib/invoke-codex.{sh,ps1}` | `codex` CLI 자동 호출 로직 (재귀 가드 + 샌드박스) |
-| `render-prompt.py` | 프로필 조회 · implement 라우팅 · CLI 버전 preflight · 프롬프트 렌더 (task-004) |
+| `codex-design.{sh,ps1}` 뒤 `review-design.{sh,ps1}` | (선택) 설계 교차검토 — Claude fable-5/max 읽기전용 2차 검토 (task-005, advisory) |
+| `render-prompt.py` | 프로필 조회 · implement 라우팅 · CLI 버전 preflight · 프롬프트 렌더 · fallback 판정 (task-004/005) |
 | `config/model-profiles.json` | phase별 모델/effort **강제 프로필 SSOT** — design 정적 강제, implement 는 design-directed |
 | `context-budget.py` | 기본 로드 세트 vs baseline 바이트/토큰 비교 — 경고 전용 (warning-only) |
 | `generate-status.py` | `kb/index/status.md` 활성/완료 표 재생성 + `--check` drift 검사 |
@@ -106,6 +107,22 @@ codex 레인은 **검증 통과 후에만** 기록한다. manifest 가 없으면
 즉 CI 는 **러너의 래퍼 로직**(인자 파싱, 검증 게이트, 재귀 가드, 종료 코드 전파)을 증명하지만,
 **실제 CLI 계약**(codex 가 정말 `--sandbox workspace-write` 를 받는지, 실제 인증/출력 형식 등)은
 증명하지 않는다. 실제 CLI 동작은 로컬 수동 검증 또는 별도 통합 테스트로 확인한다.
+
+## 설계 교차검토 (`review-design.{sh,ps1}` — task-005, P1)
+
+- 호출 형태: `runtime/review-design.sh <task-id>` — design.md 가 validator 를 통과한 뒤 **선택적으로** 실행.
+- 내부 Claude 호출: `claude -p "<prompt>" --model claude-fable-5 --effort max --fallback-model claude-opus-4-8 --output-format json`
+  (design.claude_cross_check 프로필; 모델/effort 항상 명시, CLI 버전 preflight 계승).
+- **advisory**: 검토가 우려를 지적해도 러너 종료코드는 `0`. non-zero 는 precondition/렌더/프로필/CLI/
+  JSON 파싱/파일 쓰기 오류에만 쓴다 — 구현 시작을 차단하지 않는다.
+- **읽기전용 보증**: design.md 는 Codex 소유. 러너는 실행 전후 SHA-256 해시를 비교해 변경이 없을 때만
+  산출물을 쓰고, 변경 감지 시 아무것도 기록하지 않고 실패한다.
+- **fallback 판별 (조용한 폴백 금지)**: `--output-format json` 응답의 실제 model 을 `render-prompt.py
+  detect-fallback` 로 판정한다(경로: `model` / `modelUsage` 키 / `usage.model`, 버전 접미사는 부분일치).
+  실제 model 이 요청도 fallback 도 아니거나 본문/model 을 못 찾으면 non-zero 로 실패한다.
+- 산출물: `kb/tasks/<id>/design-review.md`(advisory) + manifest 에
+  `- **cross_reviewed_by**: claude <actual-model>/max @claude <cli-ver>, <date> (fallback=<true|false>)`.
+- 경계: `collab.md` / done-gate / `reviews/` 는 건드리지 않는다 (그건 Phase D = task-006 소관).
 
 ## 참고
 

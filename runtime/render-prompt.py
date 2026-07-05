@@ -222,6 +222,7 @@ def cmd_render(args: argparse.Namespace) -> int:
         "DESIGN_FILE": args.design_file,
         "IMPL_NOTES": args.impl_notes or "",
         "PROJECT_ROOT": args.project_root or str(root),
+        "REVIEW_FILE": getattr(args, "review_file", None) or "",
         "REQUIRED_SECTIONS": required_sections,
         "EXECUTION_PLAN_SECTION": ep_cfg.get("section", "실행 계획 (Execution Plan)"),
         "EXECUTION_PLAN_FIELDS": ", ".join(ep_cfg.get("required_fields", [])),
@@ -238,6 +239,74 @@ def cmd_render(args: argparse.Namespace) -> int:
     if leftover:
         raise _fail(1, f"프롬프트 렌더 후 치환되지 않은 토큰이 남았습니다: {leftover.group(0)}")
     print(rendered, end="")
+    return 0
+
+
+def _candidate_models(payload: Any) -> List[str]:
+    """claude `--output-format json` 응답에서 실제 사용 model 후보 문자열을 모은다.
+
+    실제 schema 가 환경/버전별로 다를 수 있어(설계 오픈이슈) 작은 상수 경로만 지원한다:
+      - top-level "model"
+      - "modelUsage" 의 키들 (model id → usage 매핑)
+      - "usage.model"
+    """
+    out: List[str] = []
+    if not isinstance(payload, dict):
+        return out
+    if isinstance(payload.get("model"), str):
+        out.append(payload["model"])
+    mu = payload.get("modelUsage")
+    if isinstance(mu, dict):
+        out.extend(k for k in mu.keys() if isinstance(k, str))
+    usage = payload.get("usage")
+    if isinstance(usage, dict) and isinstance(usage.get("model"), str):
+        out.append(usage["model"])
+    return out
+
+
+def _response_text(payload: Any) -> str:
+    """응답 본문 텍스트를 추출한다 (top-level "result", 또는 content 블록의 text 합)."""
+    if not isinstance(payload, dict):
+        return ""
+    result = payload.get("result")
+    if isinstance(result, str) and result.strip():
+        return result
+    content = payload.get("content")
+    if isinstance(content, list):
+        parts = [b.get("text", "") for b in content if isinstance(b, dict) and isinstance(b.get("text"), str)]
+        joined = "".join(parts)
+        if joined.strip():
+            return joined
+    return ""
+
+
+def cmd_detect_fallback(args: argparse.Namespace) -> int:
+    raw = _read_text(Path(args.json_file), "JSON 응답") if args.json_file else sys.stdin.read()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise _fail(1, f"claude JSON 응답 파싱 실패: {e}")
+
+    text = _response_text(payload)
+    if not text.strip():
+        raise _fail(1, "claude JSON 응답에서 본문(result/content)을 찾지 못했습니다.")
+
+    candidates = _candidate_models(payload)
+    if not candidates:
+        raise _fail(1, "claude JSON 응답에서 실제 model 필드를 찾지 못했습니다 (model/modelUsage/usage.model).")
+
+    # 버전 접미사(-YYYYMMDD 등) 대응을 위해 부분일치로 판정한다.
+    requested = args.requested_model
+    fallback = args.fallback_model
+    if any(requested in c for c in candidates):
+        actual, fired = requested, "false"
+    elif any(fallback in c for c in candidates):
+        actual, fired = fallback, "true"
+    else:
+        raise _fail(1, f"실제 model 이 요청({requested})도 fallback({fallback})도 아닙니다: {candidates}")
+
+    value = {"actual_model": actual, "fallback": fired, "response_text": text}[args.field]
+    print(value, end="" if args.field == "response_text" else "\n")
     return 0
 
 
@@ -267,16 +336,24 @@ def build_parser() -> argparse.ArgumentParser:
     v.set_defaults(func=cmd_check_cli_version)
 
     d = sub.add_parser("render", help="프롬프트 템플릿 렌더")
-    d.add_argument("--phase", required=True, choices=["design", "implement"])
+    d.add_argument("--phase", required=True, choices=["design", "implement", "design-review"])
     d.add_argument("--task-id", required=True)
     d.add_argument("--design-file", required=True)
     d.add_argument("--task-desc", default=None)
     d.add_argument("--impl-notes", default=None)
+    d.add_argument("--review-file", default=None)
     d.add_argument("--project-root", default=None)
     d.add_argument("--model", default=None)
     d.add_argument("--effort", default=None)
     d.add_argument("--root", default=None)
     d.set_defaults(func=cmd_render)
+
+    f = sub.add_parser("detect-fallback", help="claude --output-format json 에서 실제 model/fallback 판정")
+    f.add_argument("--json-file", default=None, help="생략 시 stdin 에서 읽는다")
+    f.add_argument("--requested-model", required=True)
+    f.add_argument("--fallback-model", required=True)
+    f.add_argument("--field", required=True, choices=["actual_model", "fallback", "response_text"])
+    f.set_defaults(func=cmd_detect_fallback)
     return parser
 
 

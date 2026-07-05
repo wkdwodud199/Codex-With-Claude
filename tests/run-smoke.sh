@@ -16,6 +16,7 @@ cp -r "$REPO/runtime/lib"       "$WORK/runtime/"
 cp "$REPO/runtime/claude-implement.sh" "$WORK/runtime/"
 cp "$REPO/runtime/codex-design.sh" "$WORK/runtime/"
 cp "$REPO/runtime/render-prompt.py" "$WORK/runtime/"
+cp "$REPO/runtime/review-design.sh" "$WORK/runtime/"
 cp "$REPO/runtime/config/model-profiles.json" "$WORK/runtime/config/"
 # templates/prompts/ 하위 디렉터리 포함 복사 (task-004)
 cp -R "$REPO/templates/." "$WORK/templates/"
@@ -273,6 +274,100 @@ else
     printf '  [FAIL] %s (exit=%s)\n' "CLI version below minimum -> preflight fail" "$st"; fail=1
 fi
 
+
+# task-005: 설계 교차검토(review-design) smoke
+echo ""
+echo "== review-design smoke (task-005) =="
+mkdir -p "$WORK/kb/tasks/task-rv"
+cp "$REPO/tests/validator/fixtures/good.md" "$WORK/kb/tasks/task-rv/design.md"
+sed 's/task-<NNN>/task-rv/g' "$WORK/templates/manifest.md" > "$WORK/kb/tasks/task-rv/manifest.md"
+
+# (1) 정상(fable) -> review 파일 + 강제 플래그 + provenance(fallback=false) + design.md 불변
+cat > "$WORK/claude" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then echo "2.99.0 (Claude Code)"; exit 0; fi
+printf '%s\n' "$*" >> "$WORK/rv-args.log"
+echo '{"result":"## 요약\n좋음\n## 주요 우려\n없음","modelUsage":{"claude-fable-5-20260930":{"outputTokens":9}}}'
+exit 0
+EOF
+chmod +x "$WORK/claude"
+before=$(shasum -a 256 "$WORK/kb/tasks/task-rv/design.md" | awk '{print $1}')
+set +e
+out=$(env "${SCRUB[@]}" WORK="$WORK" PATH="$WORK:/usr/bin:/bin" \
+    bash "$WORK/runtime/review-design.sh" task-rv 2>&1); st=$?
+set -e
+assert_status "review-design fable -> exit 0" 0 "$st"
+[ -f "$WORK/kb/tasks/task-rv/design-review.md" ] || { echo "    review file missing"; fail=1; }
+args=$(cat "$WORK/rv-args.log" 2>/dev/null || true)
+[[ "$args" == *"--model claude-fable-5"* ]] || { echo "    --model 누락: $args"; fail=1; }
+[[ "$args" == *"--effort max"* ]] || { echo "    --effort max 누락"; fail=1; }
+[[ "$args" == *"--fallback-model claude-opus-4-8"* ]] || { echo "    --fallback-model 누락"; fail=1; }
+[[ "$args" == *"--output-format json"* ]] || { echo "    --output-format json 누락"; fail=1; }
+grep -q "cross_reviewed_by.*fallback=false" "$WORK/kb/tasks/task-rv/manifest.md" \
+    || { echo "    provenance(fallback=false) missing"; fail=1; }
+after=$(shasum -a 256 "$WORK/kb/tasks/task-rv/design.md" | awk '{print $1}')
+[ "$before" = "$after" ] || { echo "    design.md 가 변경됨(읽기전용 위반)"; fail=1; }
+
+# (2) fallback(opus) -> exit 0 + provenance fallback=true
+mkdir -p "$WORK/kb/tasks/task-rw"
+cp "$REPO/tests/validator/fixtures/good.md" "$WORK/kb/tasks/task-rw/design.md"
+sed 's/task-<NNN>/task-rw/g' "$WORK/templates/manifest.md" > "$WORK/kb/tasks/task-rw/manifest.md"
+cat > "$WORK/claude" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then echo "2.99.0 (Claude Code)"; exit 0; fi
+echo '{"result":"검토","model":"claude-opus-4-8"}'
+exit 0
+EOF
+chmod +x "$WORK/claude"
+set +e
+out=$(env "${SCRUB[@]}" WORK="$WORK" PATH="$WORK:/usr/bin:/bin" \
+    bash "$WORK/runtime/review-design.sh" task-rw 2>&1); st=$?
+set -e
+assert_status "review-design fallback(opus) -> exit 0" 0 "$st"
+grep -q "cross_reviewed_by.*fallback=true" "$WORK/kb/tasks/task-rw/manifest.md" \
+    || { echo "    provenance(fallback=true) missing"; fail=1; }
+
+# (3) unknown model -> 실패, review 파일/ provenance 없음
+mkdir -p "$WORK/kb/tasks/task-ru"
+cp "$REPO/tests/validator/fixtures/good.md" "$WORK/kb/tasks/task-ru/design.md"
+sed 's/task-<NNN>/task-ru/g' "$WORK/templates/manifest.md" > "$WORK/kb/tasks/task-ru/manifest.md"
+cat > "$WORK/claude" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then echo "2.99.0 (Claude Code)"; exit 0; fi
+echo '{"result":"x","model":"claude-sonnet-5"}'
+exit 0
+EOF
+chmod +x "$WORK/claude"
+set +e
+out=$(env "${SCRUB[@]}" WORK="$WORK" PATH="$WORK:/usr/bin:/bin" \
+    bash "$WORK/runtime/review-design.sh" task-ru 2>&1); st=$?
+set -e
+if [ "$st" -ne 0 ] && [ ! -f "$WORK/kb/tasks/task-ru/design-review.md" ]; then
+    printf '  [PASS] %s\n' "review-design unknown model -> fail, no artifact"
+else
+    printf '  [FAIL] %s (exit=%s)\n' "review-design unknown model -> fail" "$st"; fail=1
+fi
+
+# (4) 세션 내부 -> 재귀 가드 스킵(exit 0), review 파일 없음
+set +e
+out=$(env WORK="$WORK" CLAUDE_CODE_SESSION=1 PATH="$WORK:/usr/bin:/bin" \
+    bash "$WORK/runtime/review-design.sh" task-ru 2>&1); st=$?
+set -e
+assert_status "review-design in session -> guard exit 0" 0 "$st"
+[[ "$out" == *"재귀 방지"* ]] || { echo "    recursion-guard banner missing"; fail=1; }
+
+# (5) 프로필 부재 -> 실패
+set +e
+mv "$WORK/runtime/config/model-profiles.json" "$WORK/mp.bak"
+out=$(env "${SCRUB[@]}" WORK="$WORK" PATH="$WORK:/usr/bin:/bin" \
+    bash "$WORK/runtime/review-design.sh" task-rv 2>&1); st=$?
+mv "$WORK/mp.bak" "$WORK/runtime/config/model-profiles.json"
+set -e
+if [ "$st" -ne 0 ] && [[ "$out" == *"프로필"* ]]; then
+    printf '  [PASS] %s\n' "review-design profile missing -> fail"
+else
+    printf '  [FAIL] %s (exit=%s)\n' "review-design profile missing -> fail" "$st"; fail=1
+fi
 
 # C-2: --done 러너 통합 경로 smoke
 echo ""
