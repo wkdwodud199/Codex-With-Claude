@@ -10,7 +10,9 @@ $script:CwcCommonLoaded = $true
 function Resolve-Python {
     foreach ($cmd in @("python3", "python")) {
         $found = Get-Command $cmd -CommandType Application -ErrorAction SilentlyContinue
-        if ($found) { return @($cmd) }
+        # 단일 원소 배열은 PS 가 문자열로 언랩해 $py[0] 이 첫 글자('p')가 된다 —
+        # 콤마 연산자로 배열을 보존한다 (CI windows 첫 실행에서 발견된 잠복 버그).
+        if ($found) { return ,@($cmd) }
     }
     $py = Get-Command "py" -CommandType Application -ErrorAction SilentlyContinue
     if ($py) { return @("py", "-3") }
