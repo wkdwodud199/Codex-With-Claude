@@ -61,12 +61,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Direct validator CLI on golden
+      - name: Direct validator CLI on golden fixture
         shell: pwsh
-        run: python runtime\validator\cli.py kb\tasks\task-001\design.md
-      - name: PS1 runner against golden
+        run: python runtime\validator\cli.py tests\validator\fixtures\good.md
+      - name: PS1 runner end-to-end (synthetic task from fixture)
         shell: pwsh
-        run: .\runtime\claude-implement.ps1 task-001
+        run: |
+          New-Item -ItemType Directory -Path kb\tasks\task-smoke -Force | Out-Null
+          Copy-Item tests\validator\fixtures\good.md kb\tasks\task-smoke\design.md
+          .\runtime\claude-implement.ps1 task-smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path kb\tasks\task-smoke\implementation-notes.md)) { throw "impl-notes not created" }
       - name: Ensure Pester 5
         shell: pwsh
         run: |
