@@ -30,6 +30,16 @@ design.md 의 `실행 계획 (Execution Plan)` 섹션을 게이트한다 (설계
   병렬화 표(`unit / 파일 범위 / depends_on / group`)에 데이터 행이 1개 이상 있어야 한다.
 - 화이트리스트는 섹션이 있을 때만 로드한다 — 프로필 IO/JSON 오류는 종료 코드 `2`.
 
+## done-gate (`--check-done`) 강화 — 2026-07-05
+
+`schema.json` 의 `done_gate` 블록이 단일 원천이다:
+
+- **구현 노트 Status**: `done` 만 완료로 인정 (`draft`/`in-progress`/임의 값 차단).
+- **산출물 요약 Status**: `done` 만 인정 — status board 집계 기준과 일치.
+- **manifest.md**: 존재해야 하고, `inputs`/`concepts_needed`/`related_files` 가
+  비어 있거나 템플릿 placeholder 면 거부 (fast-path 로드 세트 품질 게이트).
+- legacy `task-001` 은 기존 allowlist 로 전체 우회 (변경 없음).
+
 ## 구성
 
 | 파일 | 역할 |

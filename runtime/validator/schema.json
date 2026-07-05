@@ -48,6 +48,17 @@
       "message": "파일/모듈 영향 섹션에 실제 내용 행이 없습니다. (헤더/구분선만 존재)"
     }
   ],
+  "done_gate": {
+    "notes_allowed_statuses": ["done"],
+    "summary_allowed_statuses": ["done"],
+    "manifest_required_fields": ["inputs", "concepts_needed", "related_files"],
+    "manifest_placeholders": [
+      "(이 task 가 의존하는 입력 문서/데이터)",
+      "(kb/concepts/ 중 실제 필요한 문서만; 없으면 `없음`)",
+      "(구현·수정 대상 또는 참조할 소스 파일 경로)",
+      "(로드 시 주의점; 생략 가능)"
+    ]
+  },
   "execution_plan": {
     "section": "실행 계획 (Execution Plan)",
     "required_fields": ["implement_model", "implement_effort", "routing_reason"],

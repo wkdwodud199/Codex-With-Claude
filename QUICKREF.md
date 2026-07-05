@@ -49,3 +49,6 @@ python3 runtime/context-budget.py <id>
 모든 task 산출물은 `kb/` 하위에만 작성한다. 구현 완료 시 순서대로 갱신:
 `implementation-notes.md` → `kb/artifacts/<id>-summary.md` → `python3 runtime/generate-status.py`
 (status.md 는 직접 편집하지 않는다 — 생성 블록 내용은 generate-status.py 가 관리).
+
+done-gate(`--done`/`--check-done`)는 **notes Status=done · summary Status=done · manifest 실값
+(placeholder 금지)** 를 모두 요구한다 (정본: schema.json `done_gate`).

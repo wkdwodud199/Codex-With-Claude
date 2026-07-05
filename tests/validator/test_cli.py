@@ -129,8 +129,25 @@ VALID_NOTES = (
 )
 
 
-def _make_task(repo_root: Path, task_id: str, notes: str = None, summary: str = None):
-    """tmp repo 루트에 task 디렉터리 + 템플릿 + (선택) 노트/요약을 만든다."""
+# done-gate manifest 검증(2026-07-05)을 통과하는 최소 manifest.
+VALID_MANIFEST = (
+    "# Manifest — {task_id}\n"
+    "\n"
+    "- **task_id**: {task_id}\n"
+    "- **inputs**: kb/tasks/{task_id}/design.md\n"
+    "- **concepts_needed**: 없음\n"
+    "- **related_files**: runtime/validator/cli.py\n"
+    "- **notes**: 테스트용 최소 manifest\n"
+)
+
+
+def _make_task(repo_root: Path, task_id: str, notes: str = None, summary: str = None,
+               manifest: str = "__valid__"):
+    """tmp repo 루트에 task 디렉터리 + 템플릿 + (선택) 노트/요약/manifest 를 만든다.
+
+    manifest="__valid__"(기본) 이면 통과 가능한 manifest 를 생성, None 이면 생성하지 않음,
+    그 외 문자열이면 해당 내용으로 생성한다.
+    """
     task_dir = repo_root / "kb" / "tasks" / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
     templates_dir = repo_root / "templates"
@@ -142,6 +159,12 @@ def _make_task(repo_root: Path, task_id: str, notes: str = None, summary: str = 
         artifacts_dir = repo_root / "kb" / "artifacts"
         artifacts_dir.mkdir(parents=True, exist_ok=True)
         (artifacts_dir / f"{task_id}-summary.md").write_text(summary, encoding="utf-8")
+    if manifest == "__valid__":
+        (task_dir / "manifest.md").write_text(
+            VALID_MANIFEST.format(task_id=task_id), encoding="utf-8"
+        )
+    elif manifest is not None:
+        (task_dir / "manifest.md").write_text(manifest, encoding="utf-8")
     return task_dir
 
 
@@ -277,6 +300,82 @@ def test_check_done_json_adds_mode(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["mode"] == "check-done"
     assert payload["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# done-gate 강화 (2026-07-05 codex 리뷰 반영): 상태값 · manifest 게이트
+# ---------------------------------------------------------------------------
+
+
+def test_check_done_notes_in_progress_rejected(tmp_path):
+    """구현 노트 Status 가 in-progress(또는 임의 값)이면 완료가 아니다."""
+    task_id = "task-110"
+    wip_notes = VALID_NOTES.format(task_id=task_id).replace("> Status: done", "> Status: in-progress")
+    _make_task(tmp_path, task_id, notes=wip_notes, summary=VALID_SUMMARY.format(task_id=task_id))
+    result = _run(["--check-done", task_id], repo_root=tmp_path)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "완료 기준" in result.stdout
+
+
+def test_check_done_notes_arbitrary_status_rejected(tmp_path):
+    task_id = "task-111"
+    odd_notes = VALID_NOTES.format(task_id=task_id).replace("> Status: done", "> Status: wip")
+    _make_task(tmp_path, task_id, notes=odd_notes, summary=VALID_SUMMARY.format(task_id=task_id))
+    result = _run(["--check-done", task_id], repo_root=tmp_path)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "'wip'" in result.stdout
+
+
+def test_check_done_summary_not_done_rejected(tmp_path):
+    """summary 는 완료 신호이므로 Status: done 만 인정한다 (board 집계 기준)."""
+    task_id = "task-112"
+    wip_summary = VALID_SUMMARY.format(task_id=task_id).replace("> Status: done", "> Status: in-progress")
+    _make_task(tmp_path, task_id, notes=VALID_NOTES.format(task_id=task_id), summary=wip_summary)
+    result = _run(["--check-done", task_id], repo_root=tmp_path)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "완료 신호" in result.stdout
+
+
+def test_check_done_manifest_missing_rejected(tmp_path):
+    task_id = "task-113"
+    _make_task(
+        tmp_path, task_id,
+        notes=VALID_NOTES.format(task_id=task_id),
+        summary=VALID_SUMMARY.format(task_id=task_id),
+        manifest=None,
+    )
+    result = _run(["--check-done", task_id], repo_root=tmp_path)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "manifest 누락" in result.stdout
+
+
+def test_check_done_manifest_placeholder_rejected(tmp_path):
+    """manifest 가 템플릿 placeholder 그대로면 fast-path 로드 세트가 무의미 — 거부."""
+    task_id = "task-114"
+    template_manifest = (
+        "# Manifest — {tid}\n\n"
+        "- **task_id**: {tid}\n"
+        "- **inputs**: (이 task 가 의존하는 입력 문서/데이터)\n"
+        "- **concepts_needed**: (kb/concepts/ 중 실제 필요한 문서만; 없으면 `없음`)\n"
+        "- **related_files**: (구현·수정 대상 또는 참조할 소스 파일 경로)\n"
+        "- **notes**: (로드 시 주의점; 생략 가능)\n"
+    ).format(tid=task_id)
+    _make_task(
+        tmp_path, task_id,
+        notes=VALID_NOTES.format(task_id=task_id),
+        summary=VALID_SUMMARY.format(task_id=task_id),
+        manifest=template_manifest,
+    )
+    result = _run(["--check-done", task_id], repo_root=tmp_path)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "placeholder" in result.stdout
+
+
+def test_check_done_golden_tasks_002_003_004_pass():
+    """실repo 완료 task 는 강화된 done-gate 를 계속 통과한다 (CI done-gate 계약)."""
+    for task_id in ("task-002", "task-003", "task-004"):
+        result = _run(["--check-done", task_id])
+        assert result.returncode == 0, f"{task_id}: {result.stdout}{result.stderr}"
 
 
 # ---------------------------------------------------------------------------

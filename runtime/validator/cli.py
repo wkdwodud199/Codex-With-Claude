@@ -205,6 +205,11 @@ def check_done(task_arg: str, repo_root: Optional[Path] = None) -> List[Validati
     task_id = task_dir.name
 
     errors: List[ValidationError] = []
+    schema = load_schema()
+    # done-gate 강화 (2026-07-05 codex 리뷰 반영): 상태값·manifest 를 schema 로 게이트.
+    done_gate = schema.get("done_gate", {})
+    notes_allowed = done_gate.get("notes_allowed_statuses", ["done"])
+    summary_allowed = done_gate.get("summary_allowed_statuses", ["done"])
 
     # 1) implementation-notes.md 검증
     notes_path = task_dir / "implementation-notes.md"
@@ -241,6 +246,17 @@ def check_done(task_arg: str, repo_root: Optional[Path] = None) -> List[Validati
                     message="[구현 노트 미완료] Status 가 'draft' 입니다. 완료 시 갱신하세요.",
                 )
             )
+        elif notes_status not in notes_allowed:
+            # in-progress 포함 임의 상태값 차단 — 완료 주장은 'done' 만 인정한다.
+            errors.append(
+                ValidationError(
+                    code="impl_notes_status_not_done",
+                    message=(
+                        f"[구현 노트 미완료] Status 가 '{notes_status}' 입니다 — "
+                        f"완료 기준은 {', '.join(notes_allowed)} 입니다 (AGENT.md 상태 모델)."
+                    ),
+                )
+            )
 
     # 2) artifact summary 검증
     summary_path = repo_root / "kb" / "artifacts" / f"{task_id}-summary.md"
@@ -253,7 +269,6 @@ def check_done(task_arg: str, repo_root: Optional[Path] = None) -> List[Validati
         )
     else:
         summary_text = _read_utf8(summary_path)  # IO/decode 실패 → 종료코드 2
-        schema = load_schema()
         summary_doc = parse_with_schema(summary_text, schema)
         # Inputs/Outputs/Next step 비어있지 않음 → check_meta_fields 재사용
         meta_errors = check_meta_fields(summary_doc, schema)
@@ -267,6 +282,52 @@ def check_done(task_arg: str, repo_root: Optional[Path] = None) -> List[Validati
                     message="[빈 필드] 산출물 요약의 Status 가 비어 있습니다.",
                 )
             )
+        elif summary_status not in summary_allowed:
+            errors.append(
+                ValidationError(
+                    code="summary_status_not_done",
+                    message=(
+                        f"[산출물 요약 상태 오류] Status 가 '{summary_status}' 입니다 — "
+                        f"완료 신호는 {', '.join(summary_allowed)} 입니다 (status board 집계 기준)."
+                    ),
+                )
+            )
+
+    # 3) manifest.md 검증 (2026-07-05 codex 리뷰 반영)
+    # fast-path 로드 세트(QUICKREF + manifest + design)의 구성 요소이므로,
+    # 완료 시점에는 존재해야 하고 필수 필드가 템플릿 placeholder 가 아니어야 한다.
+    manifest_path = task_dir / "manifest.md"
+    if not manifest_path.exists():
+        errors.append(
+            ValidationError(
+                code="manifest_missing",
+                message=f"[manifest 누락] {manifest_path} 가 없습니다 (기본 로드 세트 구성 요소).",
+            )
+        )
+    else:
+        manifest_text = _read_utf8(manifest_path)  # IO/decode 실패 → 종료코드 2
+        manifest_placeholders = set(done_gate.get("manifest_placeholders", []))
+        fields: dict = {}
+        for line in manifest_text.splitlines():
+            m = re.match(r"^-\s*\*\*([a-z_]+)\*\*\s*:\s*(.*)$", line)
+            if m and m.group(1) not in fields:
+                fields[m.group(1)] = m.group(2).strip()
+        for field_name in done_gate.get("manifest_required_fields", []):
+            value = fields.get(field_name, "")
+            if not value:
+                errors.append(
+                    ValidationError(
+                        code="manifest_field_empty",
+                        message=f"[manifest 미작성] '{field_name}' 필드가 없거나 비어 있습니다.",
+                    )
+                )
+            elif value in manifest_placeholders:
+                errors.append(
+                    ValidationError(
+                        code="manifest_field_placeholder",
+                        message=f"[manifest 미작성] '{field_name}' 값이 템플릿 placeholder입니다: '{value}'",
+                    )
+                )
 
     return errors
 
