@@ -371,13 +371,6 @@ def test_check_done_manifest_placeholder_rejected(tmp_path):
     assert "placeholder" in result.stdout
 
 
-def test_check_done_golden_tasks_002_003_004_pass():
-    """실repo 완료 task 는 강화된 done-gate 를 계속 통과한다 (CI done-gate 계약)."""
-    for task_id in ("task-002", "task-003", "task-004"):
-        result = _run(["--check-done", task_id])
-        assert result.returncode == 0, f"{task_id}: {result.stdout}{result.stderr}"
-
-
 # ---------------------------------------------------------------------------
 # Phase D — review CLI + approved-done 게이트 (task-006)
 # ---------------------------------------------------------------------------

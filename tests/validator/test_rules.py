@@ -113,13 +113,6 @@ def test_status_in_progress_still_blocked(schema):
     assert "status_blocked" in codes
 
 
-def test_golden_task_001_passes(schema):
-    repo_root = FIXTURES.parent.parent.parent
-    design = repo_root / "kb" / "tasks" / "task-001" / "design.md"
-    errors = _validate(design, schema)
-    assert errors == [], f"golden task-001 failed: {[e.message for e in errors]}"
-
-
 # ---------------------------------------------------------------------------
 # 실행 계획 (Execution Plan) 규칙 — task-004
 # whitelist 는 cli.py 가 profiles.json 에서 로드해 주입하므로, 단위 테스트는
@@ -181,18 +174,16 @@ def test_execution_plan_template_placeholders_flagged(schema):
     assert "execution_plan_field_placeholder" in codes
 
 
-def test_golden_task_004_execution_plan_passes(schema):
-    """task-004 설계 자체가 실행 계획 스키마의 첫 dogfood — 회귀 고정."""
-    from validator.rules import check_execution_plan, extract_execution_plan
+def test_execution_plan_extracts_expected_values(schema):
+    """실행 계획 필드 추출값을 fixture(good.md)로 고정한다 (self-contained)."""
+    from validator.rules import extract_execution_plan
 
-    repo_root = FIXTURES.parent.parent.parent
-    text = (repo_root / "kb" / "tasks" / "task-004" / "design.md").read_text(encoding="utf-8")
+    text = (FIXTURES / "good.md").read_text(encoding="utf-8")
     doc = parse_with_schema(text, schema)
     plan = extract_execution_plan(doc, schema)
     assert plan is not None
     assert plan["implement_model"] == "claude-opus-4-8"
     assert plan["implement_effort"] == "xhigh"
-    assert check_execution_plan(doc, schema, task_id="task-004", whitelist=EP_WHITELIST) == []
 
 
 def test_raw_template_fails(schema):

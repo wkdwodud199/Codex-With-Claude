@@ -63,9 +63,9 @@ _STATUS_OUTSIDE_BEFORE = """# 작업 현황 (Status Board)
 
 _STATUS_OUTSIDE_AFTER = """
 
-## 메타 개선 작업 (imp.md 로드맵)
+## 러너 빠른 참조
 
-imp.md 로드맵 포인터 — 보존 대상.
+마커 밖 수동 섹션 — 보존 대상.
 
 러너 도움말도 보존된다.
 """
@@ -209,7 +209,7 @@ def test_generation_fills_tables_and_preserves_outside(tmp_path):
     # 마커 밖 보존: before/after prose 가 그대로 남아야 한다
     assert after.startswith(_STATUS_OUTSIDE_BEFORE)
     assert after.endswith(_STATUS_OUTSIDE_AFTER)
-    assert "imp.md 로드맵 포인터 — 보존 대상." in after
+    assert "마커 밖 수동 섹션 — 보존 대상." in after
     # 마커 내부는 갱신됨
     assert "OLD CONTENT" not in after
     assert "task-002" in after

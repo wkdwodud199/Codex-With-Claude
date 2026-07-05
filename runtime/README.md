@@ -147,4 +147,3 @@ codex 레인은 **검증 통과 후에만** 기록한다. manifest 가 없으면
 
 - 상태 모델(설계 준비도 vs 구현 진행도): [AGENT.md](../AGENT.md) "문서 상태 전이" 절.
 - 리뷰 루프 인터페이스/enum/게이트 정본: [collab.md](../collab.md).
-- 로드맵 / 실패 모드: [imp.md](../imp.md) (Failure Mode #11 — codex 자율 쓰기 표면).

@@ -3,7 +3,7 @@
 > **Status: active (Phase D, task-006)**
 > 이 문서는 리뷰 루프의 **인터페이스·enum·게이트 정본**이다.
 > 실제 리뷰 데이터는 여기 쌓지 않고 per-task `kb/tasks/<id>/reviews/<NNN>.md` 에 저장한다
-> (collab.md 가 전역 append 로그가 되는 것을 방지 — imp.md "per-task review 축적" + 파일 과부하 방지).
+> (collab.md 가 전역 append 로그가 되는 것을 방지 — per-task 축적 + 파일 과부하 방지).
 
 ## 용도
 

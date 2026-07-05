@@ -65,7 +65,6 @@ Defensive lines throughout: `--auto` failure propagates non-zero · recursion gu
 ├── AGENT.md                   # Shared agent protocol + state transitions (SoT)
 ├── CLAUDE.md                  # Claude operating rules
 ├── collab.md                  # v2 review loop reservation (placeholder)
-├── imp.md                     # Enhancement roadmap (SoT)
 ├── kb/                        # Knowledge base (local markdown vault)
 │   ├── index/                 # status.md (generated board), table of contents
 │   ├── concepts/              # Architecture, workflow
@@ -137,10 +136,9 @@ Design readiness (design.md) and implementation progress (implementation-notes.m
 ## Roadmap
 
 - **v1 (current)**: Codex design → Claude implementation loop + validation gate · context budget · generated status board · done-gate
-- **v2**: Codex review via `collab.md` → Claude re-implementation loop (imp.md Phase D)
-- **v2+**: External backend adapters (Notion, etc.) (imp.md Phase C, deferred)
-
-Detailed phased roadmap: [imp.md](./imp.md) "진행 현황".
+- **v2 (current)**: model/effort enforcement + prompt SSOT, optional design cross-review
+  (`review-design`), Codex implementation-review loop via `collab.md` (`codex-review`) + approved-done gate.
+- **v2+ (deferred)**: external backend adapters (Notion, etc.) — adopt when a second backend is actually required.
 
 ## License
 
