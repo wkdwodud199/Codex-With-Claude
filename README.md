@@ -64,7 +64,8 @@ flowchart TD
 ├── QUICKREF.md                # 빠른 운영 참조 (routine 진입점)
 ├── AGENT.md                   # 공통 에이전트 규약 + 상태 전이 정의 (정본)
 ├── CLAUDE.md                  # Claude 운영 규약
-├── collab.md                  # v2 리뷰 루프 예약 (placeholder)
+├── collab.md                  # 리뷰 루프 인터페이스/enum/게이트 정본 (v2 active)
+├── UPDATING.md                # 기존 클론에 최신 CWC 반영하는 절차
 ├── kb/                        # 지식 저장소 (로컬 마크다운 vault)
 │   ├── index/                 # status.md(생성형 보드), 목차
 │   ├── concepts/              # 아키텍처, 워크플로우
@@ -139,6 +140,12 @@ flowchart TD
 - **v2 (현재)**: 모델/effort 강제 + 프롬프트 SSOT, (선택) 설계 교차검토(`review-design`),
   `collab.md` 기반 Codex 구현 리뷰 루프(`codex-review`) + approved-done 게이트.
 - **v2+ (보류)**: Notion 등 외부 백엔드 어댑터 — 두 번째 backend 요구가 실제로 생길 때 도입.
+
+## 업데이트
+
+이미 CWC 를 클론해서 작업 중인 디렉터리에 최신 프레임워크를 **작업 손실 없이** 반영하는 절차는
+[UPDATING.md](./UPDATING.md) 에 있다. 그 디렉터리의 AI 에이전트에게 "UPDATING.md 를 읽고 업데이트를
+진행하라" 고 시켜도 된다 (문서 하단에 에이전트용 순서가 있다).
 
 ## License
 

@@ -64,7 +64,8 @@ Defensive lines throughout: `--auto` failure propagates non-zero · recursion gu
 ├── QUICKREF.md                # Quick operating reference (routine entry point)
 ├── AGENT.md                   # Shared agent protocol + state transitions (SoT)
 ├── CLAUDE.md                  # Claude operating rules
-├── collab.md                  # v2 review loop reservation (placeholder)
+├── collab.md                  # Review loop interface/enum/gate SoT (v2 active)
+├── UPDATING.md                # How to pull updated CWC into an existing clone
 ├── kb/                        # Knowledge base (local markdown vault)
 │   ├── index/                 # status.md (generated board), table of contents
 │   ├── concepts/              # Architecture, workflow
@@ -139,6 +140,12 @@ Design readiness (design.md) and implementation progress (implementation-notes.m
 - **v2 (current)**: model/effort enforcement + prompt SSOT, optional design cross-review
   (`review-design`), Codex implementation-review loop via `collab.md` (`codex-review`) + approved-done gate.
 - **v2+ (deferred)**: external backend adapters (Notion, etc.) — adopt when a second backend is actually required.
+
+## Updating an existing clone
+
+To pull the updated framework into a directory you already cloned and work in **without losing your work**,
+follow [UPDATING.md](./UPDATING.md). You can also tell that directory's AI agent to "read UPDATING.md and
+perform the update" (the doc ends with an agent-oriented procedure).
 
 ## License
 
