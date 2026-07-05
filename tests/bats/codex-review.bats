@@ -65,7 +65,7 @@ EOF
     [[ "$output" == *"사용법"* ]]
 }
 
-@test "base-done 미충족 -> 전제 실패, codex 미호출" {
+@test "base-done unmet -> preflight fails, codex not called" {
     mkdir -p "$WORK/kb/tasks/task-b"
     cp "$REPO/tests/validator/fixtures/good.md" "$WORK/kb/tasks/task-b/design.md"
     _codex_stub task-b approved
